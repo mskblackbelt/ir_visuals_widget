@@ -1,0 +1,168 @@
+/* IR Vibrational Widget Styles */
+
+.ir-widget-container {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+/* Error display */
+.ir-error {
+  display: none;
+  background-color: #fee;
+  border: 1px solid #fcc;
+  color: #c33;
+  padding: 1rem;
+  border-radius: 0.25rem;
+  margin-bottom: 1rem;
+}
+
+/* Table container */
+.ir-table-container {
+  margin-bottom: 2rem;
+}
+
+.ir-table-header h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.25rem;
+  color: #1f2937;
+}
+
+.ir-table-header p {
+  margin: 0 0 1rem 0;
+  color: #6b7280;
+  font-size: 0.875rem;
+}
+
+.ir-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.ir-table thead {
+  background-color: #f3f4f6;
+}
+
+.ir-table th {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  font-weight: 600;
+  color: #374151;
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.ir-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  padding-right: 2rem;
+}
+
+.ir-table th.sortable:hover {
+  background-color: #e5e7eb;
+}
+
+.ir-table th.sortable::after {
+  content: "⇅";
+  position: absolute;
+  right: 0.5rem;
+  color: #9ca3af;
+}
+
+.ir-table th.sort-asc::after {
+  content: "↑";
+  color: #2563eb;
+}
+
+.ir-table th.sort-desc::after {
+  content: "↓";
+  color: #2563eb;
+}
+
+.ir-table tbody tr {
+  border-bottom: 1px solid #e5e7eb;
+  transition: background-color 0.2s;
+}
+
+.ir-table tbody tr:hover {
+  background-color: #f9fafb;
+}
+
+.ir-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.ir-table td {
+  padding: 0.75rem 1rem;
+  color: #374151;
+  font-size: 0.875rem;
+}
+
+.ir-table td:first-child {
+  font-weight: 500;
+  color: #1f2937;
+}
+
+.ir-table td:nth-child(2),
+.ir-table td:nth-child(3) {
+  font-family: 'Courier New', Courier, monospace;
+}
+
+/* Plot container */
+.ir-plot-container {
+  background: white;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.ir-plot-canvas {
+  width: 100%;
+  height: 400px;
+  display: block;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .ir-widget-container {
+    padding: 0.5rem;
+  }
+  
+  .ir-table {
+    font-size: 0.75rem;
+  }
+  
+  .ir-table th,
+  .ir-table td {
+    padding: 0.5rem;
+  }
+  
+  .ir-plot-canvas {
+    height: 300px;
+  }
+}
+
+/* Print styles */
+@media print {
+  .ir-widget-container {
+    max-width: 100%;
+  }
+  
+  .ir-table,
+  .ir-plot-container {
+    box-shadow: none;
+    border: 1px solid #e5e7eb;
+  }
+  
+  .ir-table th.sortable::after {
+    display: none;
+  }
+}
