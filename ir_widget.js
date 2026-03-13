@@ -18,6 +18,11 @@ function render({ model, el }) {
   const plotContainer = document.createElement("div");
   plotContainer.className = "ir-plot-container";
   
+  // Plot title
+  const plotTitle = document.createElement("h3");
+  plotTitle.className = "ir-plot-title";
+  plotContainer.appendChild(plotTitle);
+
   // Canvas for plotting
   const canvas = document.createElement("canvas");
   canvas.className = "ir-plot-canvas";
@@ -140,6 +145,13 @@ function render({ model, el }) {
     }
     
     plotContainer.style.display = "block";
+
+    // Update title
+    if (data.formula) {
+      plotTitle.textContent = `IR Spectrum - ${data.formula}`;
+    } else {
+      plotTitle.textContent = "IR Spectrum";
+    }
     
     const ctx = canvas.getContext("2d");
     const width = canvas.clientWidth;
@@ -163,12 +175,9 @@ function render({ model, el }) {
     
     // Clear canvas
     ctx.clearRect(0, 0, width, height);
-    
-    // Calculate spectrum
-    const spectrum = calculateSpectrum(data.modes, xMin, xMax, broadening, fwhm);
-    
+
     // Find max intensity for scaling
-    const maxIntensity = Math.max(...spectrum.map(p => p.y));
+    const maxIntensity = Math.max(...data.modes.map(m => m.intensity));
     
     // Draw axes
     ctx.strokeStyle = "#333";
@@ -178,25 +187,42 @@ function render({ model, el }) {
     ctx.lineTo(margin.left, margin.top + plotHeight);
     ctx.lineTo(margin.left + plotWidth, margin.top + plotHeight);
     ctx.stroke();
-    
-    // Draw spectrum
+
     ctx.strokeStyle = "#2563eb";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    
-    let firstPoint = true;
-    for (const point of spectrum) {
-      const x = margin.left + ((point.x - xMin) / (xMax - xMin)) * plotWidth;
-      const y = margin.top + plotHeight - (point.y / maxIntensity) * plotHeight;
-      
-      if (firstPoint) {
-        ctx.moveTo(x, y);
-        firstPoint = false;
-      } else {
+
+    if (broadening === "none") {
+      // Draw stick spectrum: one vertical bar per mode
+      ctx.lineWidth = 1.5;
+      const baseline = margin.top + plotHeight;
+      for (const mode of data.modes) {
+        if (mode.frequency < xMin || mode.frequency > xMax) continue;
+        const x = margin.left + ((mode.frequency - xMin) / (xMax - xMin)) * plotWidth;
+        const y = baseline - (mode.intensity / maxIntensity) * plotHeight;
+        ctx.beginPath();
+        ctx.moveTo(x, baseline);
         ctx.lineTo(x, y);
+        ctx.stroke();
       }
+    } else {
+      // Draw broadened spectrum as continuous line
+      const spectrum = calculateSpectrum(data.modes, xMin, xMax, broadening, fwhm);
+      const maxY = Math.max(...spectrum.map(p => p.y));
+
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      let firstPoint = true;
+      for (const point of spectrum) {
+        const x = margin.left + ((point.x - xMin) / (xMax - xMin)) * plotWidth;
+        const y = margin.top + plotHeight - (point.y / maxY) * plotHeight;
+        if (firstPoint) {
+          ctx.moveTo(x, y);
+          firstPoint = false;
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
     }
-    ctx.stroke();
     
     // Draw axes labels
     ctx.fillStyle = "#333";
@@ -257,21 +283,11 @@ function render({ model, el }) {
       const x = xMin + (i / numPoints) * (xMax - xMin);
       let y = 0;
       
-      if (broadening === "none") {
-        // Stick spectrum: only add intensity at exact frequency
-        for (const mode of modes) {
-          if (Math.abs(mode.frequency - x) < 0.5 / resolution) {
-            y = Math.max(y, mode.intensity);
-          }
-        }
-      } else {
-        // Apply broadening
-        for (const mode of modes) {
-          if (broadening === "lorentzian") {
-            y += lorentzian(x, mode.frequency, mode.intensity, fwhm);
-          } else if (broadening === "gaussian") {
-            y += gaussian(x, mode.frequency, mode.intensity, fwhm);
-          }
+      for (const mode of modes) {
+        if (broadening === "lorentzian") {
+          y += lorentzian(x, mode.frequency, mode.intensity, fwhm);
+        } else if (broadening === "gaussian") {
+          y += gaussian(x, mode.frequency, mode.intensity, fwhm);
         }
       }
       

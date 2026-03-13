@@ -124,6 +124,12 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
+.ir-plot-title {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.25rem;
+  color: #1f2937;
+}
+
 .ir-plot-canvas {
   width: 100%;
   height: 400px;
