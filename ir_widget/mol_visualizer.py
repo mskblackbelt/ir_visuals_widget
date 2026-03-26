@@ -356,6 +356,180 @@ class MolVisualizerWidget:
         view.zoomTo()
         return _display_view(view)
 
+    def view_linked(
+        self,
+        amplitude: float = 0.5,
+        n_frames: int = 30,
+        fwhm: float = 15.0,
+        x_min: float | None = None,
+        x_max: float | None = None,
+        mol_width: int = 500,
+        mol_height: int = 400,
+        spec_width: int = 500,
+        spec_height: int = 400,
+        background: str = _DEFAULT_BG,
+    ):
+        """
+        Display a linked two-panel view for Jupyter notebooks.
+
+        A dropdown lets the user select a vibrational mode.  The left panel
+        shows the animated ball-and-stick molecule for that mode; the right
+        panel shows the IR spectrum (Lorentzian envelope + stick spectrum) with
+        the selected mode's peak highlighted in red.
+
+        Parameters
+        ----------
+        amplitude : float
+            Maximum vibrational displacement amplitude in Å.
+        n_frames : int
+            Animation frames per oscillation cycle.
+        fwhm : float
+            Full-width at half-maximum for Lorentzian broadening (cm⁻¹).
+        x_min, x_max : float, optional
+            Wavenumber axis limits.  Default: auto (±200 cm⁻¹ from data range).
+        mol_width, mol_height : int
+            Pixel dimensions of the molecular viewer panel.
+        spec_width, spec_height : int
+            Pixel dimensions of the spectrum panel.
+        background : str
+            3Dmol.js background colour string for the molecular viewer.
+
+        Returns
+        -------
+        ipywidgets.VBox
+            A combined widget ready to display in a Jupyter cell.
+        """
+        import ipywidgets as widgets
+        import matplotlib.pyplot as plt
+        from IPython.display import display as ipy_display
+
+        self._require_geometry()
+
+        modes = self.data["modes"]
+        freqs = np.array([m["frequency"] for m in modes])
+        intensities = np.array([m["intensity"] for m in modes])
+        max_intensity = intensities.max() if intensities.max() > 0 else 1.0
+
+        # Spectrum x-axis range
+        _x_min = float(max(0.0, freqs.min() - 200)) if x_min is None else x_min
+        _x_max = float(freqs.max() + 200) if x_max is None else x_max
+
+        # Precompute Lorentzian envelope once
+        x_pts = np.linspace(_x_min, _x_max, 2000)
+        gamma = fwhm / 2.0
+        y_pts = np.zeros_like(x_pts)
+        for f, I in zip(freqs, intensities):
+            y_pts += I * gamma**2 / ((x_pts - f)**2 + gamma**2)
+        y_max = y_pts.max() if y_pts.max() > 0 else 1.0
+
+        # ── dropdown ─────────────────────────────────────────────────────────
+        options = [
+            (f"Mode {m['mode']}: {m['frequency']:.1f} cm⁻¹  ({m['intensity']:.1f} km/mol)", i)
+            for i, m in enumerate(modes)
+        ]
+        dropdown = widgets.Dropdown(
+            options=options,
+            description="Mode:",
+            layout=widgets.Layout(width="500px"),
+            style={"description_width": "initial"},
+        )
+
+        # ── output panels ─────────────────────────────────────────────────────
+        mol_out = widgets.Output(
+            layout=widgets.Layout(width=f"{mol_width}px", height=f"{mol_height}px")
+        )
+        spec_out = widgets.Output(
+            layout=widgets.Layout(width=f"{spec_width}px", height=f"{spec_height + 20}px")
+        )
+
+        # ── render helpers ───────────────────────────────────────────────────
+
+        def _render_mol(mode_idx: int) -> None:
+            """Render the animated molecular viewer for *mode_idx* into mol_out."""
+            import py3Dmol
+
+            self._require_displacements(mode_idx)
+            atoms = self.data["atoms"]
+            mode = modes[mode_idx]
+            symbols = [a["symbol"] for a in atoms]
+            coords0 = np.array([[a["x"], a["y"], a["z"]] for a in atoms])
+            disps = np.array(mode["displacements"])
+            frames = _cosine_frames(coords0, disps, amplitude, n_frames)
+
+            view = py3Dmol.view(width=mol_width, height=mol_height)
+            view.setBackgroundColor(background)
+            view.addModelsAsFrames(_make_multiframe_xyz(symbols, frames), "xyz")
+            _apply_ball_and_stick(view)
+            view.zoomTo()
+            view.animate({"loop": "forward", "reps": 0, "step": 1})
+            view.render()
+
+            mol_out.clear_output(wait=True)
+            with mol_out:
+                ipy_display(view)
+
+        def _render_spec(mode_idx: int) -> None:
+            """Render the IR spectrum with mode *mode_idx* highlighted into spec_out."""
+            fig, ax = plt.subplots(
+                figsize=(spec_width / 100, spec_height / 100), dpi=100
+            )
+
+            # Lorentzian envelope (blue)
+            ax.plot(
+                x_pts, y_pts / y_max * 100,
+                color="#2563eb", linewidth=1.5, zorder=2, label="Envelope",
+            )
+
+            # Sticks — all modes grey, selected mode red
+            for i, (f, I) in enumerate(zip(freqs, intensities)):
+                if _x_min <= f <= _x_max:
+                    selected = i == mode_idx
+                    ax.vlines(
+                        f, 0, I / max_intensity * 100,
+                        colors="#cc3333" if selected else "#aaaaaa",
+                        linewidths=2.5 if selected else 1.0,
+                        zorder=4 if selected else 1,
+                    )
+
+            # Dashed vertical guide at selected peak
+            ax.axvline(
+                freqs[mode_idx], color="#cc3333",
+                linestyle="--", linewidth=0.8, alpha=0.45, zorder=1,
+            )
+
+            ax.set_xlim(_x_min, _x_max)
+            ax.set_ylim(0, 110)
+            ax.set_xlabel("Wavenumber (cm⁻¹)")
+            ax.set_ylabel("Relative Intensity (%)")
+            formula = self.data.get("formula", "")
+            ax.set_title(f"IR Spectrum{' — ' + formula if formula else ''}")
+            ax.tick_params(direction="in", which="both")
+
+            plt.tight_layout()
+
+            spec_out.clear_output(wait=True)
+            with spec_out:
+                plt.show()
+            plt.close(fig)
+
+        # ── observe dropdown ─────────────────────────────────────────────────
+
+        def _on_change(change):
+            if change["name"] == "value":
+                _render_mol(change["new"])
+                _render_spec(change["new"])
+
+        dropdown.observe(_on_change, names="value")
+
+        # Initial render
+        _render_mol(0)
+        _render_spec(0)
+
+        return widgets.VBox([
+            dropdown,
+            widgets.HBox([mol_out, spec_out]),
+        ])
+
     # ── helpers ───────────────────────────────────────────────────────────────
 
     def _require_geometry(self):
