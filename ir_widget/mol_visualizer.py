@@ -50,34 +50,25 @@ def _make_inline_html(view) -> str:
     loads and the pink "failed to load" warning is shown instead.
 
     This function replaces the ``loadScriptAsync`` + CDN pattern with a
-    single inline ``<script>`` block containing the full library source,
-    then appends the viewer setup code that py3Dmol generated.
+    single ``<script>`` block that:
+
+    1. Saves and clears ``module``/``exports`` so 3Dmol.js (UMD bundle)
+       falls through to its browser-global path and sets ``window.$3Dmol``.
+    2. Runs the full inlined 3Dmol.js source.
+    3. Restores ``module``/``exports``.
+    4. Immediately runs the viewer setup code (same script = no cross-script
+       timing or scoping issues).
     """
     raw_html = view._make_html()
 
-    # Extract the viewer setup code that py3Dmol generated after the
-    # loadScriptAsync boilerplate.  Everything after the "$3Dmolpromise.then"
-    # open is the real setup; we need only the callback body and the closing.
-    #
-    # Pattern produced by py3Dmol ≥ 2.x:
-    #   <script>
-    #   var loadScriptAsync = function(...){ ... };
-    #   if(typeof $3Dmolpromise === 'undefined') { ... loadScriptAsync(CDN); }
-    #   var viewer_ID = null;
-    #   var warn = ...; if(warn) { warn.parentNode.removeChild(warn); }
-    #   $3Dmolpromise.then(function() {
-    #     <viewer setup>
-    #   });
-    #   </script>
-    #
-    # We want: inline 3Dmol.js, then run <viewer setup> directly.
-
-    # Keep just the HTML div (before the <script> tag)
+    # Keep the HTML div (everything before the <script> tag)
     div_part = raw_html[:raw_html.index("<script>")]
 
-    # Extract the viewer-setup block (inside the .then() callback)
+    # Extract the viewer-setup block from inside the .then() callback.
+    # py3Dmol ≥ 2.x generates:
+    #   $3Dmolpromise.then(function() { <setup> });
     then_match = re.search(
-        r'\$3Dmolpromise\.then\(function\(\)\s*\{(.*?)\}\s*\);',
+        r'\$3Dmolpromise\.then\(function\(\)\s*\{(.*)\}\s*\);',
         raw_html,
         re.DOTALL,
     )
@@ -85,21 +76,40 @@ def _make_inline_html(view) -> str:
         # Fallback: return the original HTML and let the browser try CDN
         return raw_html
 
-    # Remove the warning div hide block from setup — we'll remove the div
-    viewer_setup = then_match.group(1)
+    viewer_setup = then_match.group(1).strip()
 
-    # Suppress the "remove warning div" line; the div will be hidden via CSS
+    # Remove the warning-div cleanup snippet (we hide it via CSS instead)
     viewer_setup = re.sub(
         r'var warn\s*=.*?removeChild\(warn\);', "", viewer_setup, flags=re.DOTALL
-    )
+    ).strip()
 
     js_lib = _get_3dmol_js()
 
+    # Single consolidated script block:
+    #  • Save module/exports, then RESET them to {} so 3Dmol.js UMD bundle
+    #    skips CommonJS/AMD and falls back to setting window.$3Dmol.
+    #  • Run 3Dmol.js source inline.
+    #  • Restore module/exports.
+    #  • Run viewer setup directly (no Promise needed — $3Dmol is synchronously
+    #    available at this point).
+    combined_script = (
+        "<script>\n"
+        "(function() {\n"
+        "  var _sm = (typeof module  !== 'undefined') ? module  : undefined;\n"
+        "  var _se = (typeof exports !== 'undefined') ? exports : undefined;\n"
+        "  module = {}; exports = {};\n"
+        + js_lib + "\n"
+        "  if (_sm !== undefined) module = _sm; else try { delete module;  } catch(e) {}\n"
+        "  if (_se !== undefined) exports = _se; else try { delete exports; } catch(e) {}\n"
+        + viewer_setup + "\n"
+        "})();\n"
+        "</script>"
+    )
+
     return (
         div_part
-        + f'<style>p[id^="3dmolwarning_"]{{display:none}}</style>\n'
-        + f"<script>\n{js_lib}\n</script>\n"
-        + f"<script>\n{viewer_setup}\n</script>"
+        + '<style>p[id^="3dmolwarning_"]{display:none}</style>\n'
+        + combined_script
     )
 
 
