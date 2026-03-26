@@ -19,97 +19,49 @@ Typical usage after a Psi4 frequency calculation::
 
 from __future__ import annotations
 
+import html as _html_mod
 import math
 import pathlib
 import re
-import urllib.request
 
 import numpy as np
 
-# CDN URL used by py3Dmol — must match the version py3Dmol requests at runtime
-_3DMOL_CDN = "https://cdn.jsdelivr.net/npm/3dmol@2.5.4/build/3Dmol-min.js"
-_3dmol_js_cache: str | None = None
 
-
-def _get_3dmol_js() -> str:
-    """Fetch and cache the 3Dmol.js minified source."""
-    global _3dmol_js_cache
-    if _3dmol_js_cache is None:
-        with urllib.request.urlopen(_3DMOL_CDN, timeout=15) as resp:
-            _3dmol_js_cache = resp.read().decode("utf-8")
-    return _3dmol_js_cache
-
-
-def _make_inline_html(view) -> str:
+def _make_iframe_html(view) -> str:
     """
-    Produce a self-contained HTML string with 3Dmol.js inlined.
+    Wrap the py3Dmol viewer HTML in an ``<iframe srcdoc="...">`` for Marimo.
 
-    py3Dmol normally loads 3Dmol.js via a dynamically injected ``<script
-    src=...>`` tag (``loadScriptAsync``).  Marimo sandboxes cell output in
-    iframes whose CSP blocks that dynamic injection, so the library never
-    loads and the pink "failed to load" warning is shown instead.
+    Marimo's ``renderHTML`` pipeline (``RenderHTML.tsx``) parses HTML with
+    ``html-react-parser``.  It has two relevant behaviours:
 
-    This function replaces the ``loadScriptAsync`` + CDN pattern with a
-    single ``<script>`` block that:
+    * **Inline ``<script>`` blocks are silently ignored.**  Only
+      ``<script src="...">`` tags are processed (injected into
+      ``document.head``).  py3Dmol generates a large inline ``<script>``
+      containing the ``loadScriptAsync`` bootstrapper — this is never
+      executed, so 3Dmol.js never loads, and the pink "failed to load"
+      warning paragraph remains.
 
-    1. Saves and clears ``module``/``exports`` so 3Dmol.js (UMD bundle)
-       falls through to its browser-global path and sets ``window.$3Dmol``.
-    2. Runs the full inlined 3Dmol.js source.
-    3. Restores ``module``/``exports``.
-    4. Immediately runs the viewer setup code (same script = no cross-script
-       timing or scoping issues).
+    * **``<iframe>`` elements are rendered as real DOM iframes** via
+      ``dangerouslySetInnerHTML`` (``replaceValidIframes`` in
+      ``RenderHTML.tsx``).  Inside an ``srcdoc`` iframe the browser creates a
+      fresh browsing context where all inline scripts execute normally and
+      the CDN ``loadScriptAsync`` pattern works without restriction.
     """
     raw_html = view._make_html()
 
-    # Keep the HTML div (everything before the <script> tag)
-    div_part = raw_html[:raw_html.index("<script>")]
+    # Extract viewer dimensions from the generated div style
+    w_match = re.search(r"width:\s*(\d+)px", raw_html)
+    h_match = re.search(r"height:\s*(\d+)px", raw_html)
+    width  = int(w_match.group(1)) if w_match else 640
+    height = int(h_match.group(1)) if h_match else 480
 
-    # Extract the viewer-setup block from inside the .then() callback.
-    # py3Dmol ≥ 2.x generates:
-    #   $3Dmolpromise.then(function() { <setup> });
-    then_match = re.search(
-        r'\$3Dmolpromise\.then\(function\(\)\s*\{(.*)\}\s*\);',
-        raw_html,
-        re.DOTALL,
-    )
-    if not then_match:
-        # Fallback: return the original HTML and let the browser try CDN
-        return raw_html
-
-    viewer_setup = then_match.group(1).strip()
-
-    # Remove the warning-div cleanup snippet (we hide it via CSS instead)
-    viewer_setup = re.sub(
-        r'var warn\s*=.*?removeChild\(warn\);', "", viewer_setup, flags=re.DOTALL
-    ).strip()
-
-    js_lib = _get_3dmol_js()
-
-    # Single consolidated script block:
-    #  • Save module/exports, then RESET them to {} so 3Dmol.js UMD bundle
-    #    skips CommonJS/AMD and falls back to setting window.$3Dmol.
-    #  • Run 3Dmol.js source inline.
-    #  • Restore module/exports.
-    #  • Run viewer setup directly (no Promise needed — $3Dmol is synchronously
-    #    available at this point).
-    combined_script = (
-        "<script>\n"
-        "(function() {\n"
-        "  var _sm = (typeof module  !== 'undefined') ? module  : undefined;\n"
-        "  var _se = (typeof exports !== 'undefined') ? exports : undefined;\n"
-        "  module = {}; exports = {};\n"
-        + js_lib + "\n"
-        "  if (_sm !== undefined) module = _sm; else try { delete module;  } catch(e) {}\n"
-        "  if (_se !== undefined) exports = _se; else try { delete exports; } catch(e) {}\n"
-        + viewer_setup + "\n"
-        "})();\n"
-        "</script>"
-    )
+    # Escape HTML for use as an attribute value (double-quote delimited)
+    srcdoc = _html_mod.escape(raw_html, quote=True)
 
     return (
-        div_part
-        + '<style>p[id^="3dmolwarning_"]{display:none}</style>\n'
-        + combined_script
+        f'<iframe srcdoc="{srcdoc}" '
+        f'width="{width}" height="{height}" '
+        f'style="border:none;" frameborder="0"></iframe>'
     )
 
 
@@ -117,15 +69,16 @@ def _display_view(view):
     """
     Return a display-ready object for the current notebook environment.
 
-    - **Marimo**: generates self-contained HTML with 3Dmol.js inlined so
-      the sandboxed iframe CSP does not block CDN script loading.
+    - **Marimo**: wraps the viewer in an ``<iframe srcdoc>`` so that the
+      py3Dmol inline scripts and CDN loading work inside the iframe's
+      own browsing context (Marimo ignores inline scripts in ``mo.Html``).
     - **Jupyter / IPython**: returns the ``py3Dmol.view`` object directly;
       Jupyter calls ``_repr_html_`` which fires ``publish_display_data``.
     """
     try:
         import marimo as _mo
         if _mo.running_in_notebook():
-            return _mo.Html(_make_inline_html(view))
+            return _mo.Html(_make_iframe_html(view))
     except Exception:
         pass
     return view
