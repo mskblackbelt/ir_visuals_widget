@@ -23,12 +23,91 @@ def _(mo):
         """
         # IR Vibrational Spectroscopy Widget
 
-        This widget displays IR vibrational frequencies and spectra from quantum chemistry calculations.
-        It uses **cclib** to parse various output formats (Gaussian, ORCA, Psi4, etc.).
+        This widget displays IR vibrational frequencies and spectra from quantum chemistry
+        calculations. Vibrational data can come from:
 
-        ## Example 1: Loading data from a file
+        - **PsiAPI** – run Psi4 directly in the notebook (recommended for Psi4 1.10+)
+        - **cclib** – parse saved output files (Gaussian, ORCA, NWChem, …)
+        - **Arrays** – supply frequencies and intensities directly
 
-        If you have a quantum chemistry output file, you can load it directly:
+        ## Example 1: Running a Psi4 calculation with PsiAPI
+
+        The simplest workflow — set up a geometry, pick a method/basis, and let
+        the widget run the frequency calculation and load the results automatically.
+        """
+    )
+    return
+
+
+@app.cell
+def _(IRWidget):
+    # Run a Psi4 HF/STO-3G frequency calculation on water and display results.
+    # The widget handles psi4.geometry(), psi4.frequency(), and data extraction.
+    widget_psi4_direct = IRWidget()
+    widget_psi4_direct.run_psi4_frequency(
+        geometry="""
+          O
+          H 1 0.96
+          H 1 0.96 2 104.5
+        """,
+        method_basis="hf/sto-3g",
+        memory="2 GB",
+        num_threads=2,
+    )
+    widget_psi4_direct
+    return (widget_psi4_direct,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(
+        """
+        ## Example 2: Using an existing Psi4 wavefunction
+
+        If you have already run `psi4.frequency(..., return_wfn=True)` in your notebook,
+        pass the wavefunction directly to `load_from_psi4_wfn`. This avoids rerunning the
+        (potentially expensive) QM calculation.
+
+        ```python
+        import psi4
+
+        mol = psi4.geometry(\"\"\"
+          C
+          H 1 1.089
+          H 1 1.089 2 109.471
+          H 1 1.089 2 109.471 3 120.0
+          H 1 1.089 2 109.471 3 -120.0
+        \"\"\")
+
+        psi4.set_memory("4 GB")
+        psi4.set_num_threads(4)
+        psi4.core.set_output_file("ch4_freq.dat", False)
+
+        energy, wfn = psi4.frequency("b3lyp/6-31g*", molecule=mol, return_wfn=True)
+
+        widget = IRWidget()
+        widget.load_from_psi4_wfn(wfn)
+        widget
+        ```
+
+        The widget extracts directly from the wavefunction:
+        - **Frequencies** (cm⁻¹, negative values indicate imaginary/transition-state modes)
+        - **IR intensities** (km/mol, from dipole derivatives — `None` if unavailable)
+        - **Normal mode displacement vectors** (Å, stored per mode as `displacements` in `widget.data`)
+        - **Atom coordinates** (Å, stored as `atoms` in `widget.data` for 3-D visualisation)
+        """
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(
+        """
+        ## Example 3: Loading data from a saved output file (cclib)
+
+        For non-Psi4 codes (Gaussian, ORCA, NWChem, …) or Psi4 output files from
+        older versions, use `load_file`:
         """
     )
     return
@@ -38,15 +117,14 @@ def _(mo):
 def _(IRWidget):
     # Example: Load from file
     # widget = IRWidget(file_path="path/to/your/calculation.log")
-    
+
     # For demonstration, we'll use synthetic data
     import numpy as np
-    
+
     # Simulate water molecule IR spectrum
-    # Water has 3 normal modes: symmetric stretch, bend, asymmetric stretch
     frequencies = np.array([1595.0, 3657.0, 3756.0])
     intensities = np.array([75.0, 20.0, 45.0])
-    
+
     widget_h2o = IRWidget()
     widget_h2o.load_data(frequencies, intensities, formula="H2O")
     widget_h2o
@@ -57,9 +135,9 @@ def _(IRWidget):
 def _(mo):
     mo.md(
         """
-        ## Example 2: Benzene-like molecule
+        ## Example 4: Benzene-like molecule with controls
 
-        Here's a more complex molecule with multiple vibrational modes:
+        A more complex molecule with interactive display controls:
         """
     )
     return
@@ -69,19 +147,16 @@ def _(mo):
 def _(IRWidget, np):
     # Simulate a benzene-like molecule with more modes
     np.random.seed(42)
-    
-    # Generate realistic IR frequencies for an organic molecule
+
     n_modes = 30
     frequencies_benzene = np.concatenate([
-        np.random.uniform(400, 800, 8),    # Low frequency modes
-        np.random.uniform(900, 1600, 12),  # Mid frequency modes
-        np.random.uniform(2800, 3100, 10), # CH stretch modes
+        np.random.uniform(400, 800, 8),
+        np.random.uniform(900, 1600, 12),
+        np.random.uniform(2800, 3100, 10),
     ])
     frequencies_benzene = np.sort(frequencies_benzene)
-    
-    # Generate intensities with some variation
     intensities_benzene = np.random.exponential(30, n_modes)
-    
+
     widget_benzene = IRWidget()
     widget_benzene.load_data(frequencies_benzene, intensities_benzene, formula="C6H6")
     widget_benzene.broadening = "lorentzian"
@@ -95,18 +170,6 @@ def _(IRWidget, np):
     )
 
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(
-        """
-        ## Widget Controls
-
-        You can customize the display and spectrum parameters:
-        """
-    )
-    return
-
-
 @app.cell
 def _(mo):
     # Create controls for widget parameters
@@ -115,7 +178,7 @@ def _(mo):
         value="lorentzian",
         label="Broadening type"
     )
-    
+
     fwhm_slider = mo.ui.slider(
         start=5,
         stop=50,
@@ -123,17 +186,17 @@ def _(mo):
         value=15,
         label="FWHM (cm⁻¹)"
     )
-    
+
     show_table_toggle = mo.ui.checkbox(
         value=True,
         label="Show frequency table"
     )
-    
+
     show_plot_toggle = mo.ui.checkbox(
         value=True,
         label="Show spectrum plot"
     )
-    
+
     mo.hstack([
         mo.vstack([broadening_select, fwhm_slider]),
         mo.vstack([show_table_toggle, show_plot_toggle])
@@ -171,37 +234,33 @@ def _(
 def _(mo):
     mo.md(
         """
-        ## Using with real calculation files
+        ## Accessing vibrational mode data from Python
 
-        To load a real quantum chemistry output file:
-
-        ```python
-        from ir_widget import IRWidget
-
-        # Supported formats: Gaussian, ORCA, Psi4, NWChem, GAMESS, etc.
-        widget = IRWidget(file_path="molecule.log")
-        widget
-        ```
-
-        ### Adjusting the spectrum range
+        After loading from PsiAPI, mode displacement vectors and atom coordinates are
+        available in `widget.data`:
 
         ```python
-        widget.x_min = 500    # Minimum wavenumber (cm⁻¹)
-        widget.x_max = 4000   # Maximum wavenumber (cm⁻¹)
-        widget.broadening = "lorentzian"
-        widget.fwhm = 15.0    # Full-width at half-maximum
-        ```
-
-        ### Accessing the data
-
-        ```python
-        # Get the parsed data
         data = widget.data
 
-        # Access frequencies and intensities
+        # Frequencies and intensities
         for mode in data['modes']:
-            print(f"Mode {mode['mode']}: {mode['frequency']:.2f} cm⁻¹, "
-                  f"Intensity: {mode['intensity']:.4f} km/mol")
+            freq = mode['frequency']   # cm⁻¹
+            inten = mode['intensity']  # km/mol
+            disps = mode.get('displacements')  # list of [dx, dy, dz] per atom (Å)
+            print(f"Mode {mode['mode']}: {freq:.2f} cm⁻¹  {inten:.2f} km/mol")
+
+        # Equilibrium atom positions (Å)
+        for atom in data.get('atoms', []):
+            print(f"{atom['symbol']}  {atom['x']:.4f}  {atom['y']:.4f}  {atom['z']:.4f}")
+        ```
+
+        ### Spectrum display options
+
+        ```python
+        widget.x_min = 500       # Minimum wavenumber (cm⁻¹)
+        widget.x_max = 4000      # Maximum wavenumber (cm⁻¹)
+        widget.broadening = "lorentzian"  # "none", "lorentzian", or "gaussian"
+        widget.fwhm = 15.0       # Full-width at half-maximum (cm⁻¹)
         ```
         """
     )
@@ -210,3 +269,4 @@ def _(mo):
 
 if __name__ == "__main__":
     app.run()
+
