@@ -1,6 +1,14 @@
 #!/usr/bin/env python
 """Quick test script for the IR widget."""
 
+import sys
+from pathlib import Path
+
+# Ensure project root and examples/ are on the path
+_root = Path(__file__).parent.parent
+sys.path.insert(0, str(_root))
+sys.path.insert(0, str(_root / "examples"))
+
 from ir_widget import IRWidget
 from sample_data import get_sample_data, print_molecule_info
 
@@ -29,7 +37,7 @@ print(f"✓ Spectrum range: {widget.x_min} - {widget.x_max} cm⁻¹")
 
 print("\n" + "=" * 60)
 print("To use in a notebook, run:")
-print("  jupyter lab ir_widget_example.ipynb")
+print("  jupyter lab examples/ir_widget_example.ipynb")
 print("  or")
-print("  marimo edit ir_widget_example.py")
+print("  marimo edit examples/ir_widget_example.py")
 print("=" * 60)

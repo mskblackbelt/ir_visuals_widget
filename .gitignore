@@ -59,11 +59,12 @@ cover/
 
 # Jupyter Notebook
 .ipynb_checkpoints
-timer.dat
 
 # IPython
 profile_default/
 ipython_config.py
+
+# Psi4 / Jupyter runtime artefacts
 timer.dat
 
 
