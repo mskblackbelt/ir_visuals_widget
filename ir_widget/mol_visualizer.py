@@ -21,25 +21,101 @@ from __future__ import annotations
 
 import math
 import pathlib
+import re
+import urllib.request
 
 import numpy as np
+
+# CDN URL used by py3Dmol — must match the version py3Dmol requests at runtime
+_3DMOL_CDN = "https://cdn.jsdelivr.net/npm/3dmol@2.5.4/build/3Dmol-min.js"
+_3dmol_js_cache: str | None = None
+
+
+def _get_3dmol_js() -> str:
+    """Fetch and cache the 3Dmol.js minified source."""
+    global _3dmol_js_cache
+    if _3dmol_js_cache is None:
+        with urllib.request.urlopen(_3DMOL_CDN, timeout=15) as resp:
+            _3dmol_js_cache = resp.read().decode("utf-8")
+    return _3dmol_js_cache
+
+
+def _make_inline_html(view) -> str:
+    """
+    Produce a self-contained HTML string with 3Dmol.js inlined.
+
+    py3Dmol normally loads 3Dmol.js via a dynamically injected ``<script
+    src=...>`` tag (``loadScriptAsync``).  Marimo sandboxes cell output in
+    iframes whose CSP blocks that dynamic injection, so the library never
+    loads and the pink "failed to load" warning is shown instead.
+
+    This function replaces the ``loadScriptAsync`` + CDN pattern with a
+    single inline ``<script>`` block containing the full library source,
+    then appends the viewer setup code that py3Dmol generated.
+    """
+    raw_html = view._make_html()
+
+    # Extract the viewer setup code that py3Dmol generated after the
+    # loadScriptAsync boilerplate.  Everything after the "$3Dmolpromise.then"
+    # open is the real setup; we need only the callback body and the closing.
+    #
+    # Pattern produced by py3Dmol ≥ 2.x:
+    #   <script>
+    #   var loadScriptAsync = function(...){ ... };
+    #   if(typeof $3Dmolpromise === 'undefined') { ... loadScriptAsync(CDN); }
+    #   var viewer_ID = null;
+    #   var warn = ...; if(warn) { warn.parentNode.removeChild(warn); }
+    #   $3Dmolpromise.then(function() {
+    #     <viewer setup>
+    #   });
+    #   </script>
+    #
+    # We want: inline 3Dmol.js, then run <viewer setup> directly.
+
+    # Keep just the HTML div (before the <script> tag)
+    div_part = raw_html[:raw_html.index("<script>")]
+
+    # Extract the viewer-setup block (inside the .then() callback)
+    then_match = re.search(
+        r'\$3Dmolpromise\.then\(function\(\)\s*\{(.*?)\}\s*\);',
+        raw_html,
+        re.DOTALL,
+    )
+    if not then_match:
+        # Fallback: return the original HTML and let the browser try CDN
+        return raw_html
+
+    # Remove the warning div hide block from setup — we'll remove the div
+    viewer_setup = then_match.group(1)
+
+    # Suppress the "remove warning div" line; the div will be hidden via CSS
+    viewer_setup = re.sub(
+        r'var warn\s*=.*?removeChild\(warn\);', "", viewer_setup, flags=re.DOTALL
+    )
+
+    js_lib = _get_3dmol_js()
+
+    return (
+        div_part
+        + f'<style>p[id^="3dmolwarning_"]{{display:none}}</style>\n'
+        + f"<script>\n{js_lib}\n</script>\n"
+        + f"<script>\n{viewer_setup}\n</script>"
+    )
 
 
 def _display_view(view):
     """
     Return a display-ready object for the current notebook environment.
 
-    - **Marimo**: wraps the raw HTML string in ``marimo.Html`` so the viewer
-      renders correctly (Marimo doesn't call ``_repr_html_`` the same way
-      Jupyter does — py3Dmol's ``_repr_html_`` uses IPython side-effects
-      and returns ``None``, which Marimo treats as nothing to display).
+    - **Marimo**: generates self-contained HTML with 3Dmol.js inlined so
+      the sandboxed iframe CSP does not block CDN script loading.
     - **Jupyter / IPython**: returns the ``py3Dmol.view`` object directly;
       Jupyter calls ``_repr_html_`` which fires ``publish_display_data``.
     """
     try:
         import marimo as _mo
         if _mo.running_in_notebook():
-            return _mo.Html(view._make_html())
+            return _mo.Html(_make_inline_html(view))
     except Exception:
         pass
     return view
