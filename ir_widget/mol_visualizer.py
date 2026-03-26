@@ -29,8 +29,22 @@ import numpy as np
 
 _BALL_AND_STICK = {"stick": {"radius": 0.15}, "sphere": {"scale": 0.25}}
 
-# ~30% black (each channel = 0.70 × 255 ≈ 179 = 0xb3)
-_DEFAULT_BG = "0xb3b3b3"
+# H atoms get an explicit medium-grey color so they are visible against any
+# background — 3Dmol.js CPK default colors H white, which disappears on light
+# backgrounds.
+_H_STYLE = {
+    "stick":  {"radius": 0.15, "color": "0xaaaaaa"},
+    "sphere": {"scale":  0.25, "color": "0xaaaaaa"},
+}
+
+# ~10% black (each channel = 0.90 × 255 ≈ 230 = 0xe6)
+_DEFAULT_BG = "0xe6e6e6"
+
+
+def _apply_ball_and_stick(view) -> None:
+    """Apply ball-and-stick style with explicit H-atom colour override."""
+    view.setStyle({}, _BALL_AND_STICK)
+    view.setStyle({"elem": "H"}, _H_STYLE)
 
 
 def _make_pdb_frame(symbols: list[str], coords: np.ndarray,
@@ -144,7 +158,7 @@ class MolVisualizerWidget:
         view = py3Dmol.view(width=width, height=height)
         view.setBackgroundColor(background)
         view.addModel(_make_pdb_frame(symbols, coords), "pdb")
-        view.setStyle({}, _BALL_AND_STICK)
+        _apply_ball_and_stick(view)
         view.zoomTo()
         return view
 
@@ -198,7 +212,7 @@ class MolVisualizerWidget:
         view = py3Dmol.view(width=width, height=height)
         view.setBackgroundColor(background)
         view.addModelsAsFrames(pdb_str, "pdb")
-        view.setStyle({}, _BALL_AND_STICK)
+        _apply_ball_and_stick(view)
         view.zoomTo()
         view.animate({"loop": "backAndForth", "reps": 0, "step": 1})
 
@@ -252,7 +266,7 @@ class MolVisualizerWidget:
         # Add the molecule from the cube header (first 6 lines are metadata;
         # py3Dmol/3Dmol.js parses the geometry embedded in the cube format)
         view.addModel(cube_str, "cube")
-        view.setStyle({}, _BALL_AND_STICK)
+        _apply_ball_and_stick(view)
 
         # Positive lobe
         view.addVolumetricData(
