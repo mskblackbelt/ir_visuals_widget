@@ -29,6 +29,9 @@ import numpy as np
 
 _BALL_AND_STICK = {"stick": {"radius": 0.15}, "sphere": {"scale": 0.25}}
 
+# ~30% black (each channel = 0.70 × 255 ≈ 179 = 0xb3)
+_DEFAULT_BG = "0xb3b3b3"
+
 
 def _make_pdb_frame(symbols: list[str], coords: np.ndarray,
                     model_index: int | None = None) -> str:
@@ -107,7 +110,8 @@ class MolVisualizerWidget:
 
     # ── public view methods ───────────────────────────────────────────────────
 
-    def view_structure(self, width: int = 500, height: int = 400) -> "py3Dmol.view":
+    def view_structure(self, width: int = 500, height: int = 400,
+                       background: str = _DEFAULT_BG) -> "py3Dmol.view":
         """
         Return a py3Dmol viewer showing a ball-and-stick model of the molecule.
 
@@ -115,6 +119,10 @@ class MolVisualizerWidget:
         ----------
         width, height : int
             Viewer dimensions in pixels.
+        background : str
+            3Dmol.js colour string for the viewer background.
+            Defaults to ``'0xb3b3b3'`` (≈30 % black / 70 % white grey)
+            so that white hydrogen atoms are visible.
 
         Returns
         -------
@@ -134,6 +142,7 @@ class MolVisualizerWidget:
         coords = np.array([[a["x"], a["y"], a["z"]] for a in atoms])
 
         view = py3Dmol.view(width=width, height=height)
+        view.setBackgroundColor(background)
         view.addModel(_make_pdb_frame(symbols, coords), "pdb")
         view.setStyle({}, _BALL_AND_STICK)
         view.zoomTo()
@@ -141,7 +150,7 @@ class MolVisualizerWidget:
 
     def view_mode(self, mode_index: int, amplitude: float = 0.5,
                   n_frames: int = 30, width: int = 500,
-                  height: int = 400) -> "py3Dmol.view":
+                  height: int = 400, background: str = _DEFAULT_BG) -> "py3Dmol.view":
         """
         Return a py3Dmol viewer that animates a vibrational normal mode.
 
@@ -158,6 +167,8 @@ class MolVisualizerWidget:
             Frames per oscillation cycle (controls smoothness).
         width, height : int
             Viewer dimensions in pixels.
+        background : str
+            3Dmol.js colour string for the viewer background.
 
         Returns
         -------
@@ -185,6 +196,7 @@ class MolVisualizerWidget:
         pdb_str = _make_multiframe_pdb(symbols, frames)
 
         view = py3Dmol.view(width=width, height=height)
+        view.setBackgroundColor(background)
         view.addModelsAsFrames(pdb_str, "pdb")
         view.setStyle({}, _BALL_AND_STICK)
         view.zoomTo()
@@ -201,7 +213,8 @@ class MolVisualizerWidget:
     def view_orbital(self, cube_data: "str | pathlib.Path",
                      isovalue: float = 0.02, opacity: float = 0.7,
                      pos_color: str = "blue", neg_color: str = "red",
-                     width: int = 500, height: int = 400) -> "py3Dmol.view":
+                     width: int = 500, height: int = 400,
+                     background: str = _DEFAULT_BG) -> "py3Dmol.view":
         """
         Show a molecular orbital as dual isosurface lobes from a ``.cube`` file.
 
@@ -234,6 +247,7 @@ class MolVisualizerWidget:
         cube_str = _read_cube(cube_data)
 
         view = py3Dmol.view(width=width, height=height)
+        view.setBackgroundColor(background)
 
         # Add the molecule from the cube header (first 6 lines are metadata;
         # py3Dmol/3Dmol.js parses the geometry embedded in the cube format)
