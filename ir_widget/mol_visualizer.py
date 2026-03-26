@@ -363,19 +363,21 @@ class MolVisualizerWidget:
         fwhm: float = 15.0,
         x_min: float | None = None,
         x_max: float | None = None,
-        mol_width: int = 500,
-        mol_height: int = 400,
-        spec_width: int = 500,
-        spec_height: int = 400,
+        width: int = 960,
+        height: int = 480,
+        inset_width: int = 300,
+        inset_height: int = 250,
+        inset_pos: str = "top-right",
         background: str = _DEFAULT_BG,
     ):
         """
-        Display a linked two-panel view for Jupyter notebooks.
+        Display a linked view for Jupyter: IR spectrum with an animated
+        molecular viewer inset.
 
-        A dropdown lets the user select a vibrational mode.  The left panel
-        shows the animated ball-and-stick molecule for that mode; the right
-        panel shows the IR spectrum (Lorentzian envelope + stick spectrum) with
-        the selected mode's peak highlighted in red.
+        A dropdown selects the vibrational mode.  The spectrum panel shows the
+        Lorentzian-broadened envelope plus stick spectrum; the selected mode's
+        stick is highlighted in red.  The molecular viewer sits as an inset
+        over the spectrum and animates the selected mode.
 
         Parameters
         ----------
@@ -387,20 +389,28 @@ class MolVisualizerWidget:
             Full-width at half-maximum for Lorentzian broadening (cm⁻¹).
         x_min, x_max : float, optional
             Wavenumber axis limits.  Default: auto (±200 cm⁻¹ from data range).
-        mol_width, mol_height : int
-            Pixel dimensions of the molecular viewer panel.
-        spec_width, spec_height : int
-            Pixel dimensions of the spectrum panel.
+        width, height : int
+            Pixel dimensions of the overall panel (spectrum background).
+        inset_width, inset_height : int
+            Pixel dimensions of the molecule viewer inset.
+        inset_pos : {"top-right", "top-left", "bottom-right", "bottom-left"}
+            Corner in which to place the molecule inset.
         background : str
-            3Dmol.js background colour string for the molecular viewer.
+            3Dmol.js background colour string.  Use ``"transparent"`` for a
+            fully transparent molecule background (requires WebGL alpha support).
 
         Returns
         -------
         ipywidgets.VBox
-            A combined widget ready to display in a Jupyter cell.
+            Combined widget ready to display in a Jupyter cell.
         """
+        import base64
+        import io
+
         import ipywidgets as widgets
         import matplotlib.pyplot as plt
+        import py3Dmol
+        from IPython.display import HTML as ipy_HTML
         from IPython.display import display as ipy_display
 
         self._require_geometry()
@@ -410,7 +420,6 @@ class MolVisualizerWidget:
         intensities = np.array([m["intensity"] for m in modes])
         max_intensity = intensities.max() if intensities.max() > 0 else 1.0
 
-        # Spectrum x-axis range
         _x_min = float(max(0.0, freqs.min() - 200)) if x_min is None else x_min
         _x_max = float(freqs.max() + 200) if x_max is None else x_max
 
@@ -422,65 +431,41 @@ class MolVisualizerWidget:
             y_pts += I * gamma**2 / ((x_pts - f)**2 + gamma**2)
         y_max = y_pts.max() if y_pts.max() > 0 else 1.0
 
+        # CSS for the four inset corner positions (20 px padding from edges)
+        _inset_css = {
+            "top-right":    "top:20px;right:20px;",
+            "top-left":     "top:20px;left:20px;",
+            "bottom-right": "bottom:20px;right:20px;",
+            "bottom-left":  "bottom:20px;left:20px;",
+        }
+        inset_edge = _inset_css.get(inset_pos, _inset_css["top-right"])
+
         # ── dropdown ─────────────────────────────────────────────────────────
         options = [
-            (f"Mode {m['mode']}: {m['frequency']:.1f} cm⁻¹  ({m['intensity']:.1f} km/mol)", i)
+            (
+                f"Mode {m['mode']}: {m['frequency']:.1f} cm⁻¹"
+                f"  ({m['intensity']:.1f} km/mol)",
+                i,
+            )
             for i, m in enumerate(modes)
         ]
         dropdown = widgets.Dropdown(
             options=options,
             description="Mode:",
-            layout=widgets.Layout(width="500px"),
+            layout=widgets.Layout(width=f"{width}px"),
             style={"description_width": "initial"},
         )
 
-        # ── output panels ─────────────────────────────────────────────────────
-        mol_out = widgets.Output(
-            layout=widgets.Layout(width=f"{mol_width}px", height=f"{mol_height}px")
-        )
-        spec_out = widgets.Output(
-            layout=widgets.Layout(width=f"{spec_width}px", height=f"{spec_height + 20}px")
-        )
+        output = widgets.Output()
 
-        # ── render helpers ───────────────────────────────────────────────────
+        # ── spectrum → PNG base64 ────────────────────────────────────────────
 
-        def _render_mol(mode_idx: int) -> None:
-            """Render the animated molecular viewer for *mode_idx* into mol_out."""
-            import py3Dmol
+        def _spec_png_b64(mode_idx: int) -> str:
+            fig, ax = plt.subplots(figsize=(width / 100, height / 100), dpi=100)
 
-            self._require_displacements(mode_idx)
-            atoms = self.data["atoms"]
-            mode = modes[mode_idx]
-            symbols = [a["symbol"] for a in atoms]
-            coords0 = np.array([[a["x"], a["y"], a["z"]] for a in atoms])
-            disps = np.array(mode["displacements"])
-            frames = _cosine_frames(coords0, disps, amplitude, n_frames)
+            ax.plot(x_pts, y_pts / y_max * 100, color="#2563eb",
+                    linewidth=1.5, zorder=2)
 
-            view = py3Dmol.view(width=mol_width, height=mol_height)
-            view.setBackgroundColor(background)
-            view.addModelsAsFrames(_make_multiframe_xyz(symbols, frames), "xyz")
-            _apply_ball_and_stick(view)
-            view.zoomTo()
-            view.animate({"loop": "forward", "reps": 0, "step": 1})
-            view.render()
-
-            mol_out.clear_output(wait=True)
-            with mol_out:
-                ipy_display(view)
-
-        def _render_spec(mode_idx: int) -> None:
-            """Render the IR spectrum with mode *mode_idx* highlighted into spec_out."""
-            fig, ax = plt.subplots(
-                figsize=(spec_width / 100, spec_height / 100), dpi=100
-            )
-
-            # Lorentzian envelope (blue)
-            ax.plot(
-                x_pts, y_pts / y_max * 100,
-                color="#2563eb", linewidth=1.5, zorder=2, label="Envelope",
-            )
-
-            # Sticks — all modes grey, selected mode red
             for i, (f, I) in enumerate(zip(freqs, intensities)):
                 if _x_min <= f <= _x_max:
                     selected = i == mode_idx
@@ -491,11 +476,8 @@ class MolVisualizerWidget:
                         zorder=4 if selected else 1,
                     )
 
-            # Dashed vertical guide at selected peak
-            ax.axvline(
-                freqs[mode_idx], color="#cc3333",
-                linestyle="--", linewidth=0.8, alpha=0.45, zorder=1,
-            )
+            ax.axvline(freqs[mode_idx], color="#cc3333",
+                       linestyle="--", linewidth=0.8, alpha=0.45, zorder=1)
 
             ax.set_xlim(_x_min, _x_max)
             ax.set_ylim(0, 110)
@@ -506,29 +488,77 @@ class MolVisualizerWidget:
             ax.tick_params(direction="in", which="both")
 
             plt.tight_layout()
-
-            spec_out.clear_output(wait=True)
-            with spec_out:
-                plt.show()
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", dpi=100)
             plt.close(fig)
+            buf.seek(0)
+            return base64.b64encode(buf.read()).decode()
 
-        # ── observe dropdown ─────────────────────────────────────────────────
+        # ── molecule inset HTML ───────────────────────────────────────────────
 
-        def _on_change(change):
-            if change["name"] == "value":
-                _render_mol(change["new"])
-                _render_spec(change["new"])
+        def _mol_html(mode_idx: int) -> str:
+            """Return py3Dmol HTML string with optional transparent background."""
+            self._require_displacements(mode_idx)
+            atoms = self.data["atoms"]
+            mode = modes[mode_idx]
+            symbols = [a["symbol"] for a in atoms]
+            coords0 = np.array([[a["x"], a["y"], a["z"]] for a in atoms])
+            disps = np.array(mode["displacements"])
+            frames = _cosine_frames(coords0, disps, amplitude, n_frames)
 
-        dropdown.observe(_on_change, names="value")
+            view = py3Dmol.view(width=inset_width, height=inset_height)
+            view.setBackgroundColor("0x000000", 0)   # transparent (alpha=0)
+            view.addModelsAsFrames(
+                _make_multiframe_xyz(symbols, frames), "xyz"
+            )
+            _apply_ball_and_stick(view)
+            view.zoomTo()
+            view.animate({"loop": "forward", "reps": 0, "step": 1})
+            view.render()
 
-        # Initial render
-        _render_mol(0)
-        _render_spec(0)
+            html = view._make_html()
+            # Enable WebGL alpha channel so the transparent background is
+            # honoured; py3Dmol hard-codes {backgroundColor:"white"} in the
+            # createViewer call — we patch that here.
+            html = html.replace(
+                '{backgroundColor:"white"}',
+                '{backgroundColor:"white",alpha:true}',
+            )
+            return html
 
-        return widgets.VBox([
-            dropdown,
-            widgets.HBox([mol_out, spec_out]),
-        ])
+        # ── combined HTML ─────────────────────────────────────────────────────
+
+        def _render(mode_idx: int) -> None:
+            spec_b64 = _spec_png_b64(mode_idx)
+            mol = _mol_html(mode_idx)
+
+            combined = (
+                f'<div style="position:relative;width:{width}px;'
+                f'display:inline-block;line-height:0;">\n'
+                f'  <img src="data:image/png;base64,{spec_b64}"'
+                f'       style="width:{width}px;display:block;" />\n'
+                f'  <div style="position:absolute;{inset_edge}'
+                f'width:{inset_width}px;height:{inset_height}px;'
+                f'border-radius:6px;overflow:hidden;'
+                f'box-shadow:0 2px 12px rgba(0,0,0,0.25);">\n'
+                f'    {mol}\n'
+                f'  </div>\n'
+                f'</div>'
+            )
+
+            output.clear_output(wait=True)
+            with output:
+                ipy_display(ipy_HTML(combined))
+
+        # ── wire up and initialise ────────────────────────────────────────────
+
+        dropdown.observe(
+            lambda c: _render(c["new"]) if c["name"] == "value" else None,
+            names="value",
+        )
+        _render(0)
+
+        return widgets.VBox([dropdown, output])
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
