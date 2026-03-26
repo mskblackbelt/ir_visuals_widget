@@ -64,6 +64,8 @@ timer.dat
 # IPython
 profile_default/
 ipython_config.py
+timer.dat
+
 
 # UV
 #   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
