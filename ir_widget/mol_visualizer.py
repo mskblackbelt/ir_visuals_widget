@@ -71,11 +71,29 @@ def _make_multiframe_xyz(symbols: list[str], frames: list[np.ndarray]) -> str:
     )
 
 
-def _sine_frames(coords0: np.ndarray, disps: np.ndarray,
-                 amplitude: float, n_frames: int) -> list[np.ndarray]:
-    """Pre-compute one full oscillation cycle of displaced coordinates."""
+def _cosine_frames(coords0: np.ndarray, disps: np.ndarray,
+                   amplitude: float, n_frames: int) -> list[np.ndarray]:
+    """
+    Pre-compute one full oscillation cycle using a cosine envelope.
+
+    Using cosine (instead of sine) places the loop wrap-around at the
+    maximum displacement where the instantaneous velocity is zero, so the
+    jump from the last frame back to the first is nearly imperceptible and
+    the animation loops smoothly without the stutter that ``backAndForth``
+    mode produces at its turnaround points.
+
+      frame 0       → +amplitude  (maximum positive displacement)
+      frame n/4     → equilibrium (moving toward negative)
+      frame n/2     → −amplitude  (maximum negative displacement)
+      frame 3n/4    → equilibrium (moving toward positive)
+      frame n−1     → ≈ +amplitude (one step before frame 0)
+
+    The step from frame n−1 to frame 0 is
+    ``amplitude × (1 − cos(2π/n))``, which for n ≥ 30 is < 1 % of the
+    full displacement range — visually seamless.
+    """
     return [
-        coords0 + amplitude * math.sin(2 * math.pi * i / n_frames) * disps
+        coords0 + amplitude * math.cos(2 * math.pi * i / n_frames) * disps
         for i in range(n_frames)
     ]
 
@@ -204,14 +222,14 @@ class MolVisualizerWidget:
         coords0 = np.array([[a["x"], a["y"], a["z"]] for a in atoms])
         disps = np.array(mode["displacements"])
 
-        frames = _sine_frames(coords0, disps, amplitude, n_frames)
+        frames = _cosine_frames(coords0, disps, amplitude, n_frames)
 
         view = py3Dmol.view(width=width, height=height)
         view.setBackgroundColor(background)
         view.addModelsAsFrames(_make_multiframe_xyz(symbols, frames), "xyz")
         _apply_ball_and_stick(view)
         view.zoomTo()
-        view.animate({"loop": "backAndForth", "reps": 0, "step": 1})
+        view.animate({"loop": "forward", "reps": 0, "step": 1})
         view.render()
 
         freq = mode["frequency"]
