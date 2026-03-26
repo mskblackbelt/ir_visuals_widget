@@ -25,6 +25,26 @@ import pathlib
 import numpy as np
 
 
+def _display_view(view):
+    """
+    Return a display-ready object for the current notebook environment.
+
+    - **Marimo**: wraps the raw HTML string in ``marimo.Html`` so the viewer
+      renders correctly (Marimo doesn't call ``_repr_html_`` the same way
+      Jupyter does — py3Dmol's ``_repr_html_`` uses IPython side-effects
+      and returns ``None``, which Marimo treats as nothing to display).
+    - **Jupyter / IPython**: returns the ``py3Dmol.view`` object directly;
+      Jupyter calls ``_repr_html_`` which fires ``publish_display_data``.
+    """
+    try:
+        import marimo as _mo
+        if _mo.running_in_notebook():
+            return _mo.Html(view._make_html())
+    except Exception:
+        pass
+    return view
+
+
 # ── private helpers ──────────────────────────────────────────────────────────
 
 _STICK_R   = 0.20   # stick (bond) cylinder radius, Å
@@ -176,7 +196,7 @@ class MolVisualizerWidget:
         _apply_ball_and_stick(view)
         view.zoomTo()
         view.render()
-        return view
+        return _display_view(view)
 
     def view_mode(self, mode_index: int, amplitude: float = 0.5,
                   n_frames: int = 30, width: int = 500,
@@ -238,7 +258,7 @@ class MolVisualizerWidget:
             f"Mode {mode['mode']}:  {abs(freq):.1f}{sign} cm⁻¹  "
             f"({n_frames} frames, amplitude={amplitude} Å)"
         )
-        return view
+        return _display_view(view)
 
     def view_orbital(self, cube_data: "str | pathlib.Path",
                      isovalue: float = 0.02, opacity: float = 0.7,
@@ -295,7 +315,7 @@ class MolVisualizerWidget:
             {"isoval": -isovalue, "color": neg_color, "opacity": opacity},
         )
         view.zoomTo()
-        return view
+        return _display_view(view)
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
