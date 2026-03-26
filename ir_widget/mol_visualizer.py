@@ -1,5 +1,8 @@
 """
-Molecular structure and vibrational mode visualiser using nglview.
+Molecular structure and vibrational mode visualiser using py3Dmol.
+
+py3Dmol renders 3-D molecular graphics via the 3Dmol.js library loaded from
+a CDN — no Jupyter extension install required.
 
 Typical usage after a Psi4 frequency calculation::
 
@@ -11,84 +14,72 @@ Typical usage after a Psi4 frequency calculation::
     vis = MolVisualizerWidget(widget.data)
     vis.view_structure()                  # ball-and-stick model
     vis.view_mode(2)                      # animate mode index 2
+    vis.view_orbital('Psi_a_006_6-A.cube')  # MO isosurface (needs cube file)
 """
 
-import numpy as np
+from __future__ import annotations
 
-from nglview.base_adaptor import Structure, Trajectory
+import math
+import pathlib
+
+import numpy as np
 
 
 # ── private helpers ──────────────────────────────────────────────────────────
 
-def _make_pdb(symbols: list, coords: np.ndarray) -> str:
-    """Return a minimal PDB string for *symbols* at *coords* (Å)."""
-    lines = ["REMARK  MolVisualizerWidget"]
+_BALL_AND_STICK = {"stick": {"radius": 0.15}, "sphere": {"scale": 0.25}}
+
+
+def _make_pdb_frame(symbols: list[str], coords: np.ndarray,
+                    model_index: int | None = None) -> str:
+    """Return one PDB frame (optionally wrapped in MODEL/ENDMDL records)."""
+    lines = []
+    if model_index is not None:
+        lines.append(f"MODEL     {model_index:4d}")
     for i, (sym, (x, y, z)) in enumerate(zip(symbols, coords), start=1):
-        # Atom name: right-pad to 4 chars; element symbol right-justified in cols 77-78
         name = f" {sym:<3}" if len(sym) == 1 else f"{sym:<4}"
         lines.append(
             f"HETATM{i:5d} {name} LIG A   1    "
             f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00          {sym:>2}  "
         )
-    lines.append("END")
+    if model_index is not None:
+        lines.append("ENDMDL")
+    else:
+        lines.append("END")
     return "\n".join(lines)
 
 
-class _VibrationalTrajectory(Structure, Trajectory):
-    """
-    Combined nglview Structure + Trajectory for a single vibrational normal mode.
+def _make_multiframe_pdb(symbols: list[str], frames: list[np.ndarray]) -> str:
+    """Return a multi-model PDB string from a list of coordinate arrays."""
+    return "\n".join(
+        _make_pdb_frame(symbols, coords, i + 1)
+        for i, coords in enumerate(frames)
+    )
 
-    Frames are computed as a full sine-wave oscillation::
 
-        r(t) = r₀ + amplitude · sin(2π · t / n_frames) · displacement
+def _sine_frames(coords0: np.ndarray, disps: np.ndarray,
+                 amplitude: float, n_frames: int) -> list[np.ndarray]:
+    """Pre-compute one full oscillation cycle of displaced coordinates."""
+    return [
+        coords0 + amplitude * math.sin(2 * math.pi * i / n_frames) * disps
+        for i in range(n_frames)
+    ]
 
-    Parameters
-    ----------
-    atoms : list of dict
-        ``[{"symbol": str, "x": float, "y": float, "z": float}, ...]`` in Å.
-    displacements : list of list
-        Per-atom Cartesian displacement vectors ``[[dx, dy, dz], ...]`` in Å
-        (normalised un-mass-weighted, from ``vibinfo['x']``).
-    amplitude : float
-        Maximum displacement scaling factor (Å).
-    n_frames : int
-        Number of animation frames per oscillation cycle.
-    """
 
-    def __init__(self, atoms, displacements, amplitude=0.5, n_frames=20):
-        Structure.__init__(self)
-        Trajectory.__init__(self)
-        self.ext = "pdb"
-        self.params = {}
-
-        self._symbols = [a["symbol"] for a in atoms]
-        coords0 = np.array([[a["x"], a["y"], a["z"]] for a in atoms], dtype=float)
-        disps = np.array(displacements, dtype=float)  # (n_atoms, 3)
-
-        # Pre-compute one full oscillation cycle
-        self._frames = [
-            coords0 + amplitude * np.sin(2 * np.pi * i / n_frames) * disps
-            for i in range(n_frames)
-        ]
-        self._structure_string = _make_pdb(self._symbols, coords0)
-
-    def get_structure_string(self) -> str:
-        return self._structure_string
-
-    def get_coordinates(self, index: int) -> np.ndarray:
-        """Return (n_atoms, 3) coordinate array for frame *index* (Å)."""
-        return self._frames[index % len(self._frames)]
-
-    @property
-    def n_frames(self) -> int:
-        return len(self._frames)
+def _read_cube(cube_data: "str | pathlib.Path") -> str:
+    """Return cube file contents as a string, accepting path or raw string."""
+    path = pathlib.Path(cube_data)
+    if path.exists():
+        return path.read_text()
+    # treat as raw string content
+    return str(cube_data)
 
 
 # ── public class ─────────────────────────────────────────────────────────────
 
 class MolVisualizerWidget:
     """
-    Molecular structure and vibrational mode visualiser backed by nglview.
+    Molecular structure and vibrational mode visualiser backed by py3Dmol.
 
     Create from an :class:`~ir_widget.IRWidget` whose data was loaded via
     :meth:`~ir_widget.IRWidget.load_from_psi4_wfn` or
@@ -104,10 +95,11 @@ class MolVisualizerWidget:
     --------
     >>> from ir_widget import IRWidget, MolVisualizerWidget
     >>> widget = IRWidget()
-    >>> widget.load_from_psi4_wfn(wfn)          # after psi4.frequency(..., return_wfn=True)
+    >>> widget.load_from_psi4_wfn(wfn)
     >>> vis = MolVisualizerWidget(widget.data)
-    >>> vis.view_structure()                      # display in a notebook cell
-    >>> vis.view_mode(2)                          # animate mode index 2 (0-based)
+    >>> vis.view_structure()
+    >>> vis.view_mode(2)
+    >>> vis.view_orbital('Psi_a_006_6-A.cube')
     """
 
     def __init__(self, data: dict):
@@ -115,62 +107,61 @@ class MolVisualizerWidget:
 
     # ── public view methods ───────────────────────────────────────────────────
 
-    def view_structure(self, **kwargs):
+    def view_structure(self, width: int = 500, height: int = 400) -> "py3Dmol.view":
         """
-        Return an nglview widget showing a ball-and-stick model of the molecule.
+        Return a py3Dmol viewer showing a ball-and-stick model of the molecule.
 
         Parameters
         ----------
-        **kwargs
-            Passed to ``nglview.NGLWidget.add_ball_and_stick()``.
+        width, height : int
+            Viewer dimensions in pixels.
 
         Returns
         -------
-        nglview.NGLWidget
+        py3Dmol.view
+            Displays automatically when returned from a notebook cell.
 
         Raises
         ------
         ValueError
             If atom coordinates are not available in the data dict.
         """
-        import nglview as nv
+        import py3Dmol
 
         self._require_geometry()
-
         atoms = self.data["atoms"]
         symbols = [a["symbol"] for a in atoms]
         coords = np.array([[a["x"], a["y"], a["z"]] for a in atoms])
 
-        structure = nv.TextStructure(_make_pdb(symbols, coords), ext="pdb")
-        view = nv.NGLWidget(structure)
-        view.clear_representations()
-        view.add_ball_and_stick(**kwargs)
+        view = py3Dmol.view(width=width, height=height)
+        view.addModel(_make_pdb_frame(symbols, coords), "pdb")
+        view.setStyle({}, _BALL_AND_STICK)
+        view.zoomTo()
         return view
 
     def view_mode(self, mode_index: int, amplitude: float = 0.5,
-                  n_frames: int = 20, **kwargs):
+                  n_frames: int = 30, width: int = 500,
+                  height: int = 400) -> "py3Dmol.view":
         """
-        Return an nglview widget that animates a vibrational normal mode.
+        Return a py3Dmol viewer that animates a vibrational normal mode.
 
         The molecule oscillates along the mode's Cartesian displacement vector
-        with a sine-wave envelope. Press **Play** in the widget controls to start
-        the animation.
+        with a sine-wave envelope.  Animation loops back-and-forth automatically.
 
         Parameters
         ----------
         mode_index : int
             0-based index into ``data['modes']``.
         amplitude : float
-            Maximum displacement scale factor (Å).  Larger values exaggerate
-            the motion for visibility; 0.3–0.8 Å works well for most modes.
+            Maximum displacement scale factor (Å).  0.3–0.8 Å works well.
         n_frames : int
-            Frames per oscillation cycle (controls animation smoothness).
-        **kwargs
-            Passed to ``nglview.NGLWidget.add_ball_and_stick()``.
+            Frames per oscillation cycle (controls smoothness).
+        width, height : int
+            Viewer dimensions in pixels.
 
         Returns
         -------
-        nglview.NGLWidget
+        py3Dmol.view
 
         Raises
         ------
@@ -179,69 +170,88 @@ class MolVisualizerWidget:
         IndexError
             If *mode_index* is out of range.
         """
-        import nglview as nv
+        import py3Dmol
 
         self._require_geometry()
         self._require_displacements(mode_index)
 
+        atoms = self.data["atoms"]
         mode = self.data["modes"][mode_index]
-        traj = _VibrationalTrajectory(
-            self.data["atoms"], mode["displacements"], amplitude, n_frames
-        )
+        symbols = [a["symbol"] for a in atoms]
+        coords0 = np.array([[a["x"], a["y"], a["z"]] for a in atoms])
+        disps = np.array(mode["displacements"])
 
-        view = nv.NGLWidget(traj)
-        view.clear_representations()
-        view.add_ball_and_stick(**kwargs)
-        view.player.parameters = dict(delay=60, step=1)
+        frames = _sine_frames(coords0, disps, amplitude, n_frames)
+        pdb_str = _make_multiframe_pdb(symbols, frames)
+
+        view = py3Dmol.view(width=width, height=height)
+        view.addModelsAsFrames(pdb_str, "pdb")
+        view.setStyle({}, _BALL_AND_STICK)
+        view.zoomTo()
+        view.animate({"loop": "backAndForth", "reps": 0, "step": 1})
 
         freq = mode["frequency"]
         sign = "i" if freq < 0 else ""
         print(
             f"Mode {mode['mode']}:  {abs(freq):.1f}{sign} cm⁻¹  "
-            f"({n_frames} frames, amplitude={amplitude} Å) — press ▶ to animate"
+            f"({n_frames} frames, amplitude={amplitude} Å)"
         )
         return view
 
-    def view_orbital(self, cube_data=None, isovalue: float = 0.02,
-                     opacity: float = 0.7, **kwargs):
+    def view_orbital(self, cube_data: "str | pathlib.Path",
+                     isovalue: float = 0.02, opacity: float = 0.7,
+                     pos_color: str = "blue", neg_color: str = "red",
+                     width: int = 500, height: int = 400) -> "py3Dmol.view":
         """
-        Show a molecular orbital as a pair of isosurface lobes (future feature).
+        Show a molecular orbital as dual isosurface lobes from a ``.cube`` file.
 
-        .. note::
-            **Not yet implemented.**  Planned for a future release.
-
-        When implemented, this method will accept a ``.cube`` file (path or
-        string) produced by ``psi4.cubeprop()`` and render the positive and
-        negative isosurface lobes using nglview's ``SurfaceRepresentation``.
-
-        Example future workflow::
+        Generate the cube file with ``psi4.cubeprop()`` before calling this::
 
             psi4.set_options({'cubeprop_tasks': ['orbitals'],
                               'cubeprop_orbitals': [5, 6, 7]})
-            psi4.cubeprop(wfn)
+            psi4.cubeprop(wfn)            # writes e.g. Psi_a_006_6-A.cube
             vis.view_orbital('Psi_a_006_6-A.cube', isovalue=0.02)
 
         Parameters
         ----------
         cube_data : str or path-like
-            Path to a Gaussian `.cube` file, or the file contents as a string.
+            Path to a Gaussian ``.cube`` file, **or** its contents as a string.
         isovalue : float
-            Isosurface cutoff value.
+            Isosurface cutoff value (absolute; both ±isovalue lobes are drawn).
         opacity : float
             Lobe transparency (0 = fully transparent, 1 = opaque).
+        pos_color, neg_color : str
+            3Dmol.js colour strings for the positive and negative lobes.
+        width, height : int
+            Viewer dimensions in pixels.
 
-        Raises
-        ------
-        NotImplementedError
-            Always — this method is a planned stub.
+        Returns
+        -------
+        py3Dmol.view
         """
-        raise NotImplementedError(
-            "Molecular orbital visualisation is not yet implemented.\n"
-            "Planned workflow:\n"
-            "  1. psi4.set_options({'cubeprop_tasks': ['orbitals']})\n"
-            "  2. psi4.cubeprop(wfn)  # writes .cube files\n"
-            "  3. vis.view_orbital('Psi_a_006_6-A.cube', isovalue=0.02)"
+        import py3Dmol
+
+        cube_str = _read_cube(cube_data)
+
+        view = py3Dmol.view(width=width, height=height)
+
+        # Add the molecule from the cube header (first 6 lines are metadata;
+        # py3Dmol/3Dmol.js parses the geometry embedded in the cube format)
+        view.addModel(cube_str, "cube")
+        view.setStyle({}, _BALL_AND_STICK)
+
+        # Positive lobe
+        view.addVolumetricData(
+            cube_str, "cube",
+            {"isoval":  isovalue, "color": pos_color, "opacity": opacity},
         )
+        # Negative lobe
+        view.addVolumetricData(
+            cube_str, "cube",
+            {"isoval": -isovalue, "color": neg_color, "opacity": opacity},
+        )
+        view.zoomTo()
+        return view
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
