@@ -27,49 +27,31 @@ import numpy as np
 
 # ── private helpers ──────────────────────────────────────────────────────────
 
-# Standard CPK element colours (CSS hex, universally recognised by 3Dmol.js).
-# Anything NOT listed here (including H) falls through to the grey default.
-_ELEMENT_COLORS: dict[str, str] = {
-    "C":  "#444444",
-    "N":  "#3050F8",
-    "O":  "#FF4444",
-    "S":  "#FFFF30",
-    "P":  "#FF8000",
-    "F":  "#90E050",
-    "Cl": "#1FF01F",
-    "Br": "#A62929",
-    "I":  "#940094",
-    "Fe": "#E06633",
-}
-
-# H and any unlisted element will get this grey — clearly visible on the
-# light grey background without dominating the image.
-_H_COLOR  = "#888888"
-_STICK_R  = 0.20
-_SPHERE_S = 0.40
+_STICK_R   = 0.20   # stick (bond) cylinder radius, Å
+_SPHERE_S  = 0.40   # sphere scale factor for heavy atoms (× VDW radius)
+_H_SPHERE  = 0.30   # sphere scale factor for H — slightly smaller than heavy atoms
 
 # ~10% black (each channel = 0.90 × 255 ≈ 230 = 0xe6)
 _DEFAULT_BG = "0xe6e6e6"
 
 
-def _elem_style(color: str) -> dict:
-    return {
-        "stick":  {"radius": _STICK_R,  "color": color},
-        "sphere": {"scale":  _SPHERE_S, "color": color},
-    }
-
-
 def _apply_ball_and_stick(view) -> None:
     """
-    Apply ball-and-stick style with per-element CPK colours.
+    Apply standard CPK ball-and-stick style.
 
-    Strategy: set ALL atoms to grey first (H included), then override each
-    known heavy element.  This avoids relying on ``{elem: 'H'}`` selection
-    and works regardless of how 3Dmol.js parses the element field.
+    Uses Jmol colour scheme (H=white, C=grey, N=blue, O=red, …) for all
+    atoms, then overrides H sphere size to be slightly smaller than heavy
+    atoms so the model looks proportional.
     """
-    view.setStyle({}, _elem_style(_H_COLOR))
-    for elem, color in _ELEMENT_COLORS.items():
-        view.setStyle({"elem": elem}, _elem_style(color))
+    view.setStyle({}, {
+        "stick":  {"radius": _STICK_R,  "colorscheme": "Jmol"},
+        "sphere": {"scale":  _SPHERE_S, "colorscheme": "Jmol"},
+    })
+    # H: keep CPK white, just reduce sphere size
+    view.setStyle({"elem": "H"}, {
+        "sphere": {"scale": _H_SPHERE, "color": "white"},
+        "stick":  {"radius": _STICK_R, "color": "white"},
+    })
 
 
 def _make_xyz_frame(symbols: list[str], coords: np.ndarray,
