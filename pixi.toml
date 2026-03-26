@@ -22,3 +22,4 @@ jupyter-marimo-proxy = ">=0.0.4,<0.0.5"
 [pypi-dependencies]
 anywidget = { version = ">=0.9.21, <0.10", extras = ["dev"] }
 cclib = { git = "https://github.com/cclib/cclib", branch = "main" }
+ir-widget = { path = ".", editable = true }

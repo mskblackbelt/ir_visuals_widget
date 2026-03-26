@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ir-widget"
+version = "1.0.0"
+description = "An anywidget for displaying IR vibrational spectra from quantum chemistry calculations"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+    "anywidget",
+    "numpy",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ir_widget*"]
+
+[tool.setuptools.package-data]
+ir_widget = ["*.js", "*.css"]
