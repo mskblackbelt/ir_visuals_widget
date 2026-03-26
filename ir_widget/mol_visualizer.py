@@ -27,49 +27,64 @@ import numpy as np
 
 # ── private helpers ──────────────────────────────────────────────────────────
 
-_BALL_AND_STICK = {"stick": {"radius": 0.15}, "sphere": {"scale": 0.25}}
-
-# H atoms get an explicit medium-grey color so they are visible against any
-# background — 3Dmol.js CPK default colors H white, which disappears on light
-# backgrounds.
-_H_STYLE = {
-    "stick":  {"radius": 0.15, "color": "0xaaaaaa"},
-    "sphere": {"scale":  0.25, "color": "0xaaaaaa"},
+# Standard CPK element colours (CSS hex, universally recognised by 3Dmol.js).
+# Anything NOT listed here (including H) falls through to the grey default.
+_ELEMENT_COLORS: dict[str, str] = {
+    "C":  "#444444",
+    "N":  "#3050F8",
+    "O":  "#FF4444",
+    "S":  "#FFFF30",
+    "P":  "#FF8000",
+    "F":  "#90E050",
+    "Cl": "#1FF01F",
+    "Br": "#A62929",
+    "I":  "#940094",
+    "Fe": "#E06633",
 }
+
+# H and any unlisted element will get this grey — clearly visible on the
+# light grey background without dominating the image.
+_H_COLOR  = "#888888"
+_STICK_R  = 0.20
+_SPHERE_S = 0.40
 
 # ~10% black (each channel = 0.90 × 255 ≈ 230 = 0xe6)
 _DEFAULT_BG = "0xe6e6e6"
 
 
+def _elem_style(color: str) -> dict:
+    return {
+        "stick":  {"radius": _STICK_R,  "color": color},
+        "sphere": {"scale":  _SPHERE_S, "color": color},
+    }
+
+
 def _apply_ball_and_stick(view) -> None:
-    """Apply ball-and-stick style with explicit H-atom colour override."""
-    view.setStyle({}, _BALL_AND_STICK)
-    view.setStyle({"elem": "H"}, _H_STYLE)
+    """
+    Apply ball-and-stick style with per-element CPK colours.
+
+    Strategy: set ALL atoms to grey first (H included), then override each
+    known heavy element.  This avoids relying on ``{elem: 'H'}`` selection
+    and works regardless of how 3Dmol.js parses the element field.
+    """
+    view.setStyle({}, _elem_style(_H_COLOR))
+    for elem, color in _ELEMENT_COLORS.items():
+        view.setStyle({"elem": elem}, _elem_style(color))
 
 
-def _make_pdb_frame(symbols: list[str], coords: np.ndarray,
-                    model_index: int | None = None) -> str:
-    """Return one PDB frame (optionally wrapped in MODEL/ENDMDL records)."""
-    lines = []
-    if model_index is not None:
-        lines.append(f"MODEL     {model_index:4d}")
-    for i, (sym, (x, y, z)) in enumerate(zip(symbols, coords), start=1):
-        name = f" {sym:<3}" if len(sym) == 1 else f"{sym:<4}"
-        lines.append(
-            f"HETATM{i:5d} {name} LIG A   1    "
-            f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00          {sym:>2}  "
-        )
-    if model_index is not None:
-        lines.append("ENDMDL")
-    else:
-        lines.append("END")
+def _make_xyz_frame(symbols: list[str], coords: np.ndarray,
+                    comment: str = "") -> str:
+    """Return a single XYZ-format frame string."""
+    lines = [str(len(symbols)), comment]
+    for sym, (x, y, z) in zip(symbols, coords):
+        lines.append(f"{sym:<3}  {x:12.6f}  {y:12.6f}  {z:12.6f}")
     return "\n".join(lines)
 
 
-def _make_multiframe_pdb(symbols: list[str], frames: list[np.ndarray]) -> str:
-    """Return a multi-model PDB string from a list of coordinate arrays."""
+def _make_multiframe_xyz(symbols: list[str], frames: list[np.ndarray]) -> str:
+    """Return a multi-frame XYZ string (frames concatenated, no separator)."""
     return "\n".join(
-        _make_pdb_frame(symbols, coords, i + 1)
+        _make_xyz_frame(symbols, coords, f"frame {i + 1}")
         for i, coords in enumerate(frames)
     )
 
@@ -157,9 +172,10 @@ class MolVisualizerWidget:
 
         view = py3Dmol.view(width=width, height=height)
         view.setBackgroundColor(background)
-        view.addModel(_make_pdb_frame(symbols, coords), "pdb")
+        view.addModel(_make_xyz_frame(symbols, coords), "xyz")
         _apply_ball_and_stick(view)
         view.zoomTo()
+        view.render()
         return view
 
     def view_mode(self, mode_index: int, amplitude: float = 0.5,
@@ -207,14 +223,14 @@ class MolVisualizerWidget:
         disps = np.array(mode["displacements"])
 
         frames = _sine_frames(coords0, disps, amplitude, n_frames)
-        pdb_str = _make_multiframe_pdb(symbols, frames)
 
         view = py3Dmol.view(width=width, height=height)
         view.setBackgroundColor(background)
-        view.addModelsAsFrames(pdb_str, "pdb")
+        view.addModelsAsFrames(_make_multiframe_xyz(symbols, frames), "xyz")
         _apply_ball_and_stick(view)
         view.zoomTo()
         view.animate({"loop": "backAndForth", "reps": 0, "step": 1})
+        view.render()
 
         freq = mode["frequency"]
         sign = "i" if freq < 0 else ""
