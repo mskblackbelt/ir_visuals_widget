@@ -318,22 +318,25 @@ def _(psi4, wfn_benz):
 
 
 @app.cell
+def _(MolVisualizerWidget, orb_list, widget_benz):
+    vis_benz = MolVisualizerWidget(widget_benz.data)
+    ndigits = len(str(max(orb_list)))
+    cube_files = [f'Psi_a_{n:0{ndigits}d}_{n}-A.cube' for n in orb_list]
+    print(f"Benzene: {len(vis_benz.data['atoms'])} atoms, {len(vis_benz.data['modes'])} vibrational modes")
+    return cube_files, vis_benz
+
+
+@app.cell
 def _(vis_benz):
     vis_benz.view_structure()
     return
 
 
 @app.cell
-def _(MolVisualizerWidget, orb_list, widget_benz):
-    # from ir_widget import MolVisualizerWidget
-    vis_benz = MolVisualizerWidget(widget_benz.data)
-
-    ndigits = len(str(max(orb_list)))
-    cube_files = [f'Psi_a_{n:0{ndigits}d}_{n}-A.cube' for n in orb_list]
-
-    # homo_index=2 means cube_files[2] is the HOMO (shown by default)
+def _(cube_files, vis_benz):
+    # Orbital viewer with dropdown — HOMO is shown by default
     vis_benz.view_orbital_selector(cube_files, homo_index=2, isovalue=0.02)
-    return (vis_benz,)
+    return
 
 
 @app.cell(hide_code=True)
