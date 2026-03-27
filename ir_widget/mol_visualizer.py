@@ -634,7 +634,10 @@ function render({ model, el }) {
 
   // ── dropdown row ─────────────────────────────────────────────────────────
   const selectWrapper = document.createElement('div');
-  selectWrapper.style.cssText = `display:flex;align-items:center;gap:8px;margin-bottom:6px;width:${W}px;`;
+  // position:relative + z-index:1 ensures the dropdown sits above the 3Dmol
+  // WebGL canvas, which sets position:relative on its container and would
+  // otherwise create a stacking context that paints over this row.
+  selectWrapper.style.cssText = `position:relative;z-index:1;display:flex;align-items:center;gap:8px;margin-bottom:6px;width:${W}px;`;
 
   const selectLabel = document.createElement('label');
   selectLabel.textContent = 'Mode:';
@@ -765,7 +768,9 @@ function render({ model, el }) {
 
   // ── dropdown row ─────────────────────────────────────────────────────────
   const selectWrapper = document.createElement('div');
-  selectWrapper.style.cssText = `display:flex;align-items:center;gap:8px;margin-bottom:6px;width:${W}px;`;
+  // position:relative + z-index:1 ensures the dropdown sits above the 3Dmol
+  // WebGL canvas stacking context.
+  selectWrapper.style.cssText = `position:relative;z-index:1;display:flex;align-items:center;gap:8px;margin-bottom:6px;width:${W}px;`;
 
   const selectLabel = document.createElement('label');
   selectLabel.textContent = 'Orbital:';
