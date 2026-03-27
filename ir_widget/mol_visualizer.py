@@ -753,15 +753,13 @@ function ensure3Dmol() {
 }
 
 function render({ model, el }) {
-  const W           = model.get('_width');
-  const H           = model.get('_height');
-  const cubeStrings = model.get('_cube_strings');
-  const molXyz      = model.get('_mol_xyz');
-  const labels      = model.get('_orbital_labels');
-  const isovalue    = model.get('_isovalue');
-  const opacity     = model.get('_opacity');
-  const posColor    = model.get('_pos_color');
-  const negColor    = model.get('_neg_color');
+  const W        = model.get('_width');
+  const H        = model.get('_height');
+  const labels   = model.get('_orbital_labels');
+  const isovalue = model.get('_isovalue');
+  const opacity  = model.get('_opacity');
+  const posColor = model.get('_pos_color');
+  const negColor = model.get('_neg_color');
 
   el.style.cssText = 'display:inline-block;font-family:sans-serif;';
 
@@ -800,28 +798,24 @@ function render({ model, el }) {
     viewer.setStyle({ elem: 'H' }, { sphere: { scale: 0.3, color: 'white' }, stick: { radius: 0.20, color: 'white' } });
   }
 
-  async function updateOrbital(idx) {
+  async function updateOrbital() {
     if (!viewer) return;
-    const cube = cubeStrings[idx];
+    // Read current cube string fresh from model — Python observer keeps it current.
+    const cube   = model.get('_cube_string');
+    const molXyz = model.get('_mol_xyz');
     if (!cube) return;
     try { viewer.removeAllSurfaces(); } catch (_) {}
     viewer.removeAllModels();
-    // Load atoms from the XYZ traitlet (reliable) rather than cube header.
-    // The cube file's atom section is not consistently parsed by all
-    // 3Dmol.js versions; XYZ always works.
     if (molXyz) { viewer.addModel(molXyz, 'xyz'); }
     applyBallAndStick();
     if (!orbInitialized) { viewer.zoomTo({}, 0); orbInitialized = true; }
-    // Snapshot camera BEFORE async surface computation — addIsosurface
-    // auto-fits to the full cube grid bounding box when it resolves,
-    // which zooms the camera far out and hides the molecule.
+    // Save camera before async surface computation to prevent auto-fit reset.
     const camState = viewer.getView();
     viewer.render();   // show atoms immediately while surfaces compute
 
     const vol = new $3Dmol.VolumeData(cube, 'cube');
     await viewer.addIsosurface(vol, { isoval:  isovalue, color: posColor, opacity: opacity });
     await viewer.addIsosurface(vol, { isoval: -isovalue, color: negColor, opacity: opacity });
-    // Restore camera so molecule stays in frame after surface renders
     viewer.setView(camState);
     viewer.render();
   }
@@ -831,23 +825,28 @@ function render({ model, el }) {
     viewer.setBackgroundColor(0xe6e6e6);
     requestAnimationFrame(() => {
       viewer.resize();
-      updateOrbital(model.get('orbital_index'));
+      updateOrbital();
     });
   }).catch(() => {
     molDiv.innerHTML = '<span style="color:#cc3333;font-size:12px;padding:8px;">3Dmol.js failed to load</span>';
   });
 
+  // Dropdown click: tell Python to load the new cube string for this index.
+  // Python's @observe('orbital_index') will update _cube_string, which then
+  // triggers the change:_cube_string handler below to re-render.
   selectEl.addEventListener('change', e => {
     const idx = parseInt(e.target.value, 10);
     model.set('orbital_index', idx);
     model.save_changes();
-    updateOrbital(idx);
   });
 
+  // React to Python updating the current cube string (triggered by observer).
+  model.on('change:_cube_string', () => { updateOrbital(); });
+
+  // React to Python changing the selected orbital (e.g., homo_index reset).
   model.on('change:orbital_index', () => {
-    const idx = model.get('orbital_index');
-    selectEl.value = String(idx);
-    updateOrbital(idx);
+    selectEl.value = String(model.get('orbital_index'));
+    // _cube_string will be updated by Python observer → triggers change:_cube_string
   });
 
   return () => {
@@ -863,17 +862,23 @@ class OrbitalViewWidget(anywidget.AnyWidget):
     """
     Molecular orbital viewer with an orbital-selection dropdown.
 
-    Renders dual ±isosurface lobes from pre-loaded Gaussian ``.cube`` file
-    contents.  Works in both JupyterLab and Marimo.  Instantiate via
+    Renders dual ±isosurface lobes from a Gaussian ``.cube`` file.
+    Works in both JupyterLab and Marimo.  Instantiate via
     :meth:`MolVisualizerWidget.view_orbital_selector`.
+
+    Only the *current* orbital's cube data is synced to JavaScript at any
+    time (``_cube_string``).  Switching orbitals sends a single cube file
+    over the comm channel rather than the full list, keeping messages small.
     """
 
     _esm = _ORBITAL_VIEW_JS
 
     #: Currently selected orbital (0-based index into the cube_files list).
-    orbital_index = _tr.Int(0).tag(sync=True)
+    orbital_index   = _tr.Int(0).tag(sync=True)
 
-    _cube_strings   = _tr.List(_tr.Unicode()).tag(sync=True)
+    # Single cube string for the currently displayed orbital.  Updated by
+    # _on_orbital_index_change whenever orbital_index changes.
+    _cube_string    = _tr.Unicode("").tag(sync=True)
     _mol_xyz        = _tr.Unicode("").tag(sync=True)
     _orbital_labels = _tr.List(_tr.Unicode()).tag(sync=True)
     _isovalue       = _tr.Float(0.02).tag(sync=True)
@@ -882,6 +887,19 @@ class OrbitalViewWidget(anywidget.AnyWidget):
     _neg_color      = _tr.Unicode("red").tag(sync=True)
     _width          = _tr.Int(500).tag(sync=True)
     _height         = _tr.Int(400).tag(sync=True)
+
+    # Python-only storage — NOT synced to JS.  Set by view_orbital_selector.
+    _all_cube_strings: "list[str]"
+
+    @_tr.observe("orbital_index")
+    def _on_orbital_index_change(self, change: dict) -> None:
+        """Swap _cube_string when the user picks a different orbital."""
+        idx = change["new"]
+        if (
+            hasattr(self, "_all_cube_strings")
+            and 0 <= idx < len(self._all_cube_strings)
+        ):
+            self._cube_string = self._all_cube_strings[idx]
 
 
 # ── public class ─────────────────────────────────────────────────────────────
@@ -1316,9 +1334,9 @@ class MolVisualizerWidget:
         coords = np.array([[a["x"], a["y"], a["z"]] for a in atoms])
         mol_xyz = _make_xyz_frame(symbols, coords)
 
-        return OrbitalViewWidget(
+        widget = OrbitalViewWidget(
             orbital_index=default_index,
-            _cube_strings=cube_strings,
+            _cube_string=cube_strings[default_index],
             _mol_xyz=mol_xyz,
             _orbital_labels=labels,
             _isovalue=isovalue,
@@ -1328,6 +1346,10 @@ class MolVisualizerWidget:
             _width=width,
             _height=height,
         )
+        # Store all cube strings Python-side so the observer can swap them
+        # on dropdown change without syncing the full list to JavaScript.
+        widget._all_cube_strings = cube_strings
+        return widget
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
