@@ -799,7 +799,7 @@ function render({ model, el }) {
     viewer.setStyle({ elem: 'H' }, { sphere: { scale: 0.3, color: 'white' }, stick: { radius: 0.20, color: 'white' } });
   }
 
-  function updateOrbital(idx) {
+  async function updateOrbital(idx) {
     if (!viewer) return;
     const cube = cubeStrings[idx];
     if (!cube) return;
@@ -808,11 +808,18 @@ function render({ model, el }) {
     viewer.addModel(cube, 'cube');
     applyBallAndStick();
     if (!orbInitialized) { viewer.zoomTo({}, 0); orbInitialized = true; }
-    viewer.render();   // render atoms immediately; surfaces follow asynchronously
+    // Snapshot camera BEFORE async surface computation — addIsosurface
+    // auto-fits to the full cube grid bounding box when it resolves,
+    // which zooms the camera far out and hides the molecule.
+    const camState = viewer.getView();
+    viewer.render();   // show atoms immediately while surfaces compute
+
     const vol = new $3Dmol.VolumeData(cube, 'cube');
-    viewer.addIsosurface(vol, { isoval:  isovalue, color: posColor, opacity: opacity });
-    viewer.addIsosurface(vol, { isoval: -isovalue, color: negColor, opacity: opacity });
-    // addIsosurface triggers its own render when computation completes
+    await viewer.addIsosurface(vol, { isoval:  isovalue, color: posColor, opacity: opacity });
+    await viewer.addIsosurface(vol, { isoval: -isovalue, color: negColor, opacity: opacity });
+    // Restore camera so molecule stays in frame after surface renders
+    viewer.setView(camState);
+    viewer.render();
   }
 
   ensure3Dmol().then(() => {
