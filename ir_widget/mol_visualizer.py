@@ -84,6 +84,152 @@ def _display_view(view):
     return view
 
 
+# ── inset location helpers ───────────────────────────────────────────────────
+
+# Mapping from matplotlib legend loc names / integer codes to canonical names.
+_LOC_INT_TO_NAME: dict[int, str] = {
+    0: "best",         1: "upper right",  2: "upper left",
+    3: "lower left",   4: "lower right",  5: "right",
+    6: "center left",  7: "center right", 8: "lower center",
+    9: "upper center", 10: "center",
+}
+_LOC_NAMES: frozenset[str] = frozenset(_LOC_INT_TO_NAME.values())
+
+# Matplotlib typically leaves these fractions of the figure for axis labels.
+# Used by the 'best' placement algorithm to map data → pixel coordinates.
+_AX_LEFT   = 0.105   # fraction of figure width  (left of axes box)
+_AX_RIGHT  = 0.970   # fraction of figure width  (right of axes box)
+_AX_TOP    = 0.090   # fraction of figure height (top of axes box, from top)
+_AX_BOTTOM = 0.895   # fraction of figure height (bottom of axes box, from top)
+
+_INSET_PAD = 10      # px gap between inset edge and figure edge
+
+
+def _inset_css(loc: str, W: int, H: int, iw: int, ih: int) -> str:
+    """
+    Return a CSS position string (``top/bottom/left/right`` in pixels) that
+    places an ``iw × ih`` inset inside a ``W × H`` container at location
+    *loc* (a matplotlib legend ``loc`` name).
+
+    The inset is offset ``_INSET_PAD`` pixels from every edge it is anchored
+    to.  Centre positions are computed from absolute pixel values so they
+    work correctly inside a ``position:relative`` div.
+    """
+    loc = _validate_loc(loc)
+    p = _INSET_PAD
+    cx = (W - iw) // 2   # left edge for horizontally-centred inset
+    cy = (H - ih) // 2   # top  edge for vertically-centred inset
+
+    return {
+        "upper right":  f"top:{p}px;right:{p}px;",
+        "upper left":   f"top:{p}px;left:{p}px;",
+        "lower left":   f"top:{H-ih-p}px;left:{p}px;",
+        "lower right":  f"top:{H-ih-p}px;right:{p}px;",
+        "right":        f"top:{cy}px;right:{p}px;",
+        "center left":  f"top:{cy}px;left:{p}px;",
+        "center right": f"top:{cy}px;right:{p}px;",
+        "lower center": f"top:{H-ih-p}px;left:{cx}px;",
+        "upper center": f"top:{p}px;left:{cx}px;",
+        "center":       f"top:{cy}px;left:{cx}px;",
+    }[loc]
+
+
+def _inset_bbox(loc: str, W: int, H: int, iw: int, ih: int) \
+        -> tuple[int, int, int, int]:
+    """
+    Return the pixel bounding box ``(x0, y0, x1, y1)`` (origin = top-left of
+    the figure image) for the inset at *loc*.
+    """
+    p = _INSET_PAD
+    cx = (W - iw) // 2
+    cy = (H - ih) // 2
+    return {
+        "upper right":  (W-iw-p, p,       W-p,    p+ih),
+        "upper left":   (p,      p,        p+iw,   p+ih),
+        "lower left":   (p,      H-ih-p,   p+iw,   H-p),
+        "lower right":  (W-iw-p, H-ih-p,   W-p,    H-p),
+        "right":        (W-iw-p, cy,        W-p,   cy+ih),
+        "center left":  (p,      cy,        p+iw,  cy+ih),
+        "center right": (W-iw-p, cy,        W-p,   cy+ih),
+        "lower center": (cx,     H-ih-p,   cx+iw,  H-p),
+        "upper center": (cx,     p,        cx+iw,  p+ih),
+        "center":       (cx,     cy,       cx+iw,  cy+ih),
+    }[loc]
+
+
+def _validate_loc(loc: "str | int") -> str:
+    """Normalise *loc* to a canonical location name; raise on unknown values."""
+    if isinstance(loc, int):
+        if loc not in _LOC_INT_TO_NAME:
+            raise ValueError(
+                f"Unknown integer loc code {loc!r}. "
+                f"Valid codes: {sorted(_LOC_INT_TO_NAME)}"
+            )
+        loc = _LOC_INT_TO_NAME[loc]
+    loc = loc.strip().lower()
+    if loc not in _LOC_NAMES:
+        raise ValueError(
+            f"Unknown loc {loc!r}. "
+            f"Valid names: {sorted(_LOC_NAMES)}"
+        )
+    return loc
+
+
+def _best_inset_loc(
+    x_pts: np.ndarray, y_pts_norm: np.ndarray,
+    freqs: np.ndarray, intensities_norm: np.ndarray,
+    x_min: float, x_max: float,
+    W: int, H: int, iw: int, ih: int,
+) -> str:
+    """
+    Choose the inset location (excluding ``'best'``) that overlaps the least
+    spectrum "ink" — the approach used by matplotlib's ``legend(loc='best')``.
+
+    *y_pts_norm* and *intensities_norm* are already normalised to 0–100 %.
+
+    The algorithm converts data coordinates to pixel coordinates using the
+    estimated axes bounding box (``_AX_LEFT`` … ``_AX_BOTTOM``) and then
+    counts how many sampled curve/stick points fall inside each candidate box.
+    """
+    ax_l = _AX_LEFT  * W
+    ax_r = _AX_RIGHT * W
+    ax_t = _AX_TOP   * H
+    ax_b = _AX_BOTTOM * H
+
+    def _to_px(xd: np.ndarray, yd: np.ndarray):
+        xp = ax_l + (xd - x_min) / (x_max - x_min) * (ax_r - ax_l)
+        yp = ax_t + (1.0 - yd / 100.0) * (ax_b - ax_t)
+        return xp, yp
+
+    # Envelope points
+    ex, ey = _to_px(x_pts, y_pts_norm)
+
+    # Stick points: sample each stick as a dense vertical line
+    stick_x_list, stick_y_list = [], []
+    n_samples = 20
+    for f, h in zip(freqs, intensities_norm):
+        ys = np.linspace(0, h, n_samples)
+        xs = np.full(n_samples, f)
+        sx, sy = _to_px(xs, ys)
+        stick_x_list.append(sx)
+        stick_y_list.append(sy)
+
+    all_x = np.concatenate([ex, *stick_x_list])
+    all_y = np.concatenate([ey, *stick_y_list])
+
+    candidates = [k for k in _LOC_NAMES if k != "best"]
+    best_loc, best_count = "upper right", float("inf")
+    for cand in candidates:
+        x0, y0, x1, y1 = _inset_bbox(cand, W, H, iw, ih)
+        count = int(np.sum(
+            (all_x >= x0) & (all_x <= x1) & (all_y >= y0) & (all_y <= y1)
+        ))
+        if count < best_count:
+            best_count = count
+            best_loc = cand
+    return best_loc
+
+
 # ── private helpers ──────────────────────────────────────────────────────────
 
 _STICK_R   = 0.20   # stick (bond) cylinder radius, Å
@@ -367,7 +513,7 @@ class MolVisualizerWidget:
         height: int = 480,
         inset_width: int = 300,
         inset_height: int = 250,
-        inset_pos: str = "top-right",
+        loc: "str | int" = "best",
         background: str = _DEFAULT_BG,
     ):
         """
@@ -393,8 +539,22 @@ class MolVisualizerWidget:
             Pixel dimensions of the overall panel (spectrum background).
         inset_width, inset_height : int
             Pixel dimensions of the molecule viewer inset.
-        inset_pos : {"top-right", "top-left", "bottom-right", "bottom-left"}
-            Corner in which to place the molecule inset.
+        loc : str or int
+            Inset placement — same names and integer codes as matplotlib's
+            ``legend(loc=...)`` argument:
+
+            * ``'best'`` (default) — auto-selects the corner with the least
+              spectrum overlap, using the same approach as matplotlib.
+            * ``'upper right'`` / ``1``
+            * ``'upper left'``  / ``2``
+            * ``'lower left'``  / ``3``
+            * ``'lower right'`` / ``4``
+            * ``'right'``       / ``5``
+            * ``'center left'`` / ``6``
+            * ``'center right'``/ ``7``
+            * ``'lower center'``/ ``8``
+            * ``'upper center'``/ ``9``
+            * ``'center'``      / ``10``
         background : str
             3Dmol.js background colour string.  Use ``"transparent"`` for a
             fully transparent molecule background (requires WebGL alpha support).
@@ -423,22 +583,24 @@ class MolVisualizerWidget:
         _x_min = float(max(0.0, freqs.min() - 200)) if x_min is None else x_min
         _x_max = float(freqs.max() + 200) if x_max is None else x_max
 
-        # Precompute Lorentzian envelope once
+        # Precompute Lorentzian envelope once (normalised to 0-100 %)
         x_pts = np.linspace(_x_min, _x_max, 2000)
         gamma = fwhm / 2.0
         y_pts = np.zeros_like(x_pts)
         for f, I in zip(freqs, intensities):
             y_pts += I * gamma**2 / ((x_pts - f)**2 + gamma**2)
         y_max = y_pts.max() if y_pts.max() > 0 else 1.0
+        y_norm = y_pts / y_max * 100           # 0–100 %
+        i_norm = intensities / max_intensity * 100
 
-        # CSS for the four inset corner positions (20 px padding from edges)
-        _inset_css = {
-            "top-right":    "top:20px;right:20px;",
-            "top-left":     "top:20px;left:20px;",
-            "bottom-right": "bottom:20px;right:20px;",
-            "bottom-left":  "bottom:20px;left:20px;",
-        }
-        inset_edge = _inset_css.get(inset_pos, _inset_css["top-right"])
+        # Resolve loc (validate + compute best if requested)
+        _loc = _validate_loc(loc)
+        if _loc == "best":
+            _loc = _best_inset_loc(
+                x_pts, y_norm, freqs, i_norm,
+                _x_min, _x_max, width, height, inset_width, inset_height,
+            )
+        inset_edge = _inset_css(_loc, width, height, inset_width, inset_height)
 
         # ── dropdown ─────────────────────────────────────────────────────────
         options = [
@@ -463,14 +625,13 @@ class MolVisualizerWidget:
         def _spec_png_b64(mode_idx: int) -> str:
             fig, ax = plt.subplots(figsize=(width / 100, height / 100), dpi=100)
 
-            ax.plot(x_pts, y_pts / y_max * 100, color="#2563eb",
-                    linewidth=1.5, zorder=2)
+            ax.plot(x_pts, y_norm, color="#2563eb", linewidth=1.5, zorder=2)
 
-            for i, (f, I) in enumerate(zip(freqs, intensities)):
+            for i, (f, I) in enumerate(zip(freqs, i_norm)):
                 if _x_min <= f <= _x_max:
                     selected = i == mode_idx
                     ax.vlines(
-                        f, 0, I / max_intensity * 100,
+                        f, 0, I,
                         colors="#cc3333" if selected else "#aaaaaa",
                         linewidths=2.5 if selected else 1.0,
                         zorder=4 if selected else 1,
@@ -497,7 +658,7 @@ class MolVisualizerWidget:
         # ── molecule inset HTML ───────────────────────────────────────────────
 
         def _mol_html(mode_idx: int) -> str:
-            """Return py3Dmol HTML string with optional transparent background."""
+            """Return py3Dmol HTML string with transparent background."""
             self._require_displacements(mode_idx)
             atoms = self.data["atoms"]
             mode = modes[mode_idx]
@@ -517,14 +678,12 @@ class MolVisualizerWidget:
             view.render()
 
             html = view._make_html()
-            # Enable WebGL alpha channel so the transparent background is
-            # honoured; py3Dmol hard-codes {backgroundColor:"white"} in the
-            # createViewer call — we patch that here.
-            html = html.replace(
+            # Enable WebGL alpha channel; py3Dmol hard-codes
+            # {backgroundColor:"white"} in createViewer — patch it here.
+            return html.replace(
                 '{backgroundColor:"white"}',
                 '{backgroundColor:"white",alpha:true}',
             )
-            return html
 
         # ── combined HTML ─────────────────────────────────────────────────────
 
