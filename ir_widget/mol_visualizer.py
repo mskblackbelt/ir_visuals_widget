@@ -521,12 +521,12 @@ function render({ model, el }) {
     if (!viewer) return;
     const frames = molFrames[modeIdx];
     if (!frames) return;
+    viewer.stopAnimate();          // stop existing timer before replacing models
     viewer.removeAllModels();
     viewer.addModelsAsFrames(frames, 'xyz');
     applyBallAndStick();
-    viewer.zoomTo();
-    viewer.animate({ loop: 'forward', reps: 0, step: 1 });
-    viewer.render();
+    viewer.zoomTo({}, 0);          // instant zoom (duration=0), no camera animation
+    viewer.animate({ loop: 'forward', reps: 0, step: 1, interval: 40 });
   }
 
   ensure3Dmol().then(() => {
@@ -560,7 +560,7 @@ function render({ model, el }) {
   });
 
   return () => {
-    if (viewer) { try { viewer.removeAllModels(); } catch (_) {} }
+    if (viewer) { try { viewer.stopAnimate(); viewer.removeAllModels(); } catch (_) {} }
   };
 }
 
