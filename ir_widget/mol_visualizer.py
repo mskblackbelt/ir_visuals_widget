@@ -15,6 +15,7 @@ Typical usage after a Psi4 frequency calculation::
     vis.view_structure()                  # ball-and-stick model
     vis.view_mode(2)                      # animate mode index 2
     vis.view_orbital('Psi_a_006_6-A.cube')  # MO isosurface (needs cube file)
+    vis.view_linked()                     # linked spectrum + animation panel
 """
 
 from __future__ import annotations
@@ -24,7 +25,9 @@ import math
 import pathlib
 import re
 
+import anywidget
 import numpy as np
+import traitlets as _tr
 
 
 def _make_iframe_html(view) -> str:
@@ -312,6 +315,293 @@ def _read_cube(cube_data: "str | pathlib.Path") -> str:
     return str(cube_data)
 
 
+# ── LinkedViewWidget (anywidget) ─────────────────────────────────────────────
+
+_LINKED_VIEW_JS = r"""
+const _3DMOL_SRC = 'https://cdn.jsdelivr.net/npm/3dmol@2.5.4/build/3Dmol-min.js';
+
+// Module-level promise ensures 3Dmol.js is loaded only once per page.
+let _3dmolPromise = null;
+
+function ensure3Dmol() {
+  if (_3dmolPromise) return _3dmolPromise;
+  _3dmolPromise = new Promise((resolve, reject) => {
+    if (window.$3Dmol) { resolve(window.$3Dmol); return; }
+    const s = document.createElement('script');
+    s.src = _3DMOL_SRC;
+    s.onload  = () => resolve(window.$3Dmol);
+    s.onerror = () => { _3dmolPromise = null; reject(new Error('3Dmol.js failed to load')); };
+    document.head.appendChild(s);
+  });
+  return _3dmolPromise;
+}
+
+function render({ model, el }) {
+  const W  = model.get('_width');
+  const H  = model.get('_height');
+  const IW = model.get('_inset_width');
+  const IH = model.get('_inset_height');
+  const insetStyle = model.get('_inset_css_str');
+  const xMin    = model.get('_x_min');
+  const xMax    = model.get('_x_max');
+  const formula = model.get('_formula');
+  const xPts    = model.get('_x_pts');
+  const yNorm   = model.get('_y_norm');
+  const freqs   = model.get('_freqs');
+  const iNorm   = model.get('_i_norm');
+  const molFrames = model.get('_mol_frames');
+  const labels    = model.get('_mode_labels');
+
+  // ── DOM structure ────────────────────────────────────────────────────────
+  el.style.cssText = 'display:inline-block;font-family:sans-serif;';
+
+  const selectWrapper = document.createElement('div');
+  selectWrapper.style.cssText = `display:flex;align-items:center;gap:8px;margin-bottom:6px;width:${W}px;`;
+
+  const selectLabel = document.createElement('label');
+  selectLabel.textContent = 'Mode:';
+  selectLabel.style.cssText = 'font-size:13px;font-weight:bold;white-space:nowrap;';
+
+  const selectEl = document.createElement('select');
+  selectEl.style.cssText = 'flex:1;padding:4px 8px;font-size:13px;border:1px solid #ccc;border-radius:4px;background:#fff;cursor:pointer;';
+  labels.forEach((label, i) => {
+    const opt = document.createElement('option');
+    opt.value = String(i);
+    opt.textContent = label;
+    selectEl.appendChild(opt);
+  });
+  selectEl.value = String(model.get('mode_index'));
+
+  selectWrapper.appendChild(selectLabel);
+  selectWrapper.appendChild(selectEl);
+
+  const plotArea = document.createElement('div');
+  plotArea.style.cssText = `position:relative;width:${W}px;height:${H}px;`;
+
+  const dpr = window.devicePixelRatio || 1;
+  const canvas = document.createElement('canvas');
+  canvas.width  = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+  canvas.style.cssText = `position:absolute;top:0;left:0;width:${W}px;height:${H}px;`;
+
+  const molDiv = document.createElement('div');
+  molDiv.style.cssText = `position:absolute;${insetStyle}width:${IW}px;height:${IH}px;border-radius:6px;overflow:hidden;`;
+
+  plotArea.appendChild(canvas);
+  plotArea.appendChild(molDiv);
+  el.appendChild(selectWrapper);
+  el.appendChild(plotArea);
+
+  // ── Spectrum drawing ─────────────────────────────────────────────────────
+  const margin = { top: 35, right: 20, bottom: 48, left: 65 };
+
+  function drawSpectrum(modeIdx) {
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.scale(dpr, dpr);
+
+    const pw = W - margin.left - margin.right;
+    const ph = H - margin.top - margin.bottom;
+    const baseline = margin.top + ph;
+
+    const toX = xd => margin.left + (xd - xMin) / (xMax - xMin) * pw;
+    const toY = yd => margin.top  + (1 - yd / 100) * ph;
+
+    // White background
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, W, H);
+
+    // Title
+    ctx.fillStyle = '#222';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(formula ? `IR Spectrum \u2014 ${formula}` : 'IR Spectrum', W / 2, 20);
+
+    // Axes
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(margin.left, margin.top);
+    ctx.lineTo(margin.left, baseline);
+    ctx.lineTo(margin.left + pw, baseline);
+    ctx.stroke();
+
+    // X-axis ticks + labels
+    ctx.fillStyle = '#444';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    const nxTicks = 6;
+    for (let i = 0; i <= nxTicks; i++) {
+      const v = xMin + (xMax - xMin) * i / nxTicks;
+      const x = toX(v);
+      ctx.beginPath(); ctx.moveTo(x, baseline); ctx.lineTo(x, baseline + 4); ctx.stroke();
+      ctx.fillText(Math.round(v).toString(), x, baseline + 16);
+    }
+    ctx.fillText('Wavenumber (cm\u207b\u00b9)', W / 2, H - 8);
+
+    // Y-axis ticks + label
+    ctx.textAlign = 'right';
+    for (let i = 0; i <= 4; i++) {
+      const v = i * 25;
+      const y = toY(v);
+      ctx.beginPath(); ctx.moveTo(margin.left - 4, y); ctx.lineTo(margin.left, y); ctx.stroke();
+      ctx.fillText(v + '%', margin.left - 8, y + 4);
+    }
+    ctx.save();
+    ctx.translate(14, H / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = 'center';
+    ctx.fillText('Relative Intensity', 0, 0);
+    ctx.restore();
+
+    // Dashed vertical guide for selected mode
+    const sf = freqs[modeIdx];
+    if (sf >= xMin && sf <= xMax) {
+      ctx.save();
+      ctx.strokeStyle = '#cc3333';
+      ctx.lineWidth = 0.8;
+      ctx.setLineDash([4, 4]);
+      ctx.globalAlpha = 0.45;
+      ctx.beginPath();
+      ctx.moveTo(toX(sf), margin.top);
+      ctx.lineTo(toX(sf), baseline);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Grey sticks (all non-selected)
+    for (let i = 0; i < freqs.length; i++) {
+      if (i === modeIdx) continue;
+      const f = freqs[i];
+      if (f < xMin || f > xMax) continue;
+      ctx.strokeStyle = '#aaaaaa';
+      ctx.lineWidth = 1.0;
+      ctx.beginPath();
+      ctx.moveTo(toX(f), baseline);
+      ctx.lineTo(toX(f), toY(iNorm[i]));
+      ctx.stroke();
+    }
+    // Selected stick on top in red
+    if (freqs[modeIdx] >= xMin && freqs[modeIdx] <= xMax) {
+      ctx.strokeStyle = '#cc3333';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(toX(freqs[modeIdx]), baseline);
+      ctx.lineTo(toX(freqs[modeIdx]), toY(iNorm[modeIdx]));
+      ctx.stroke();
+    }
+
+    // Lorentzian envelope
+    ctx.strokeStyle = '#2563eb';
+    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 1.0;
+    ctx.beginPath();
+    let first = true;
+    for (let i = 0; i < xPts.length; i++) {
+      if (xPts[i] < xMin || xPts[i] > xMax) continue;
+      const x = toX(xPts[i]);
+      const y = toY(yNorm[i]);
+      if (first) { ctx.moveTo(x, y); first = false; } else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  // ── 3Dmol viewer ─────────────────────────────────────────────────────────
+  let viewer = null;
+
+  function applyBallAndStick() {
+    viewer.setStyle({}, { sphere: { scale: 0.4, colorscheme: 'Jmol' }, stick: { radius: 0.20 } });
+    viewer.setStyle({ elem: 'H' }, { sphere: { scale: 0.3, color: 'white' }, stick: { radius: 0.20, color: 'white' } });
+  }
+
+  function updateMol(modeIdx) {
+    if (!viewer) return;
+    const frames = molFrames[modeIdx];
+    if (!frames) return;
+    viewer.removeAllModels();
+    viewer.addModelsAsFrames(frames, 'xyz');
+    applyBallAndStick();
+    viewer.zoomTo();
+    viewer.animate({ loop: 'forward', reps: 0, step: 1 });
+    viewer.render();
+  }
+
+  ensure3Dmol().then(() => {
+    viewer = window.$3Dmol.createViewer(molDiv, { alpha: true });
+    viewer.setBackgroundColor(0x000000, 0);  // transparent
+    requestAnimationFrame(() => {
+      viewer.resize();
+      updateMol(model.get('mode_index'));
+    });
+  }).catch(err => {
+    molDiv.style.cssText += 'display:flex;align-items:center;justify-content:center;';
+    molDiv.innerHTML = '<span style="color:#cc3333;font-size:12px;padding:8px;">3Dmol.js failed to load</span>';
+  });
+
+  // ── event wiring ─────────────────────────────────────────────────────────
+  drawSpectrum(model.get('mode_index'));
+
+  selectEl.addEventListener('change', e => {
+    const idx = parseInt(e.target.value, 10);
+    model.set('mode_index', idx);
+    model.save_changes();
+    drawSpectrum(idx);
+    updateMol(idx);
+  });
+
+  model.on('change:mode_index', () => {
+    const idx = model.get('mode_index');
+    selectEl.value = String(idx);
+    drawSpectrum(idx);
+    updateMol(idx);
+  });
+
+  return () => {
+    if (viewer) { try { viewer.removeAllModels(); } catch (_) {} }
+  };
+}
+
+export default { render };
+"""
+
+
+class LinkedViewWidget(anywidget.AnyWidget):
+    """
+    Linked IR spectrum + animated molecular viewer as an anywidget.
+
+    Works in both JupyterLab and Marimo.  Instantiate via
+    :meth:`MolVisualizerWidget.view_linked` rather than directly.
+    """
+
+    _esm = _LINKED_VIEW_JS
+
+    #: Currently selected mode (0-based); synced to the dropdown in the UI.
+    mode_index = _tr.Int(0).tag(sync=True)
+
+    # ── spectrum data (precomputed in Python, read-only in JS) ────────────
+    _x_pts  = _tr.List(_tr.Float()).tag(sync=True)
+    _y_norm = _tr.List(_tr.Float()).tag(sync=True)
+    _freqs  = _tr.List(_tr.Float()).tag(sync=True)
+    _i_norm = _tr.List(_tr.Float()).tag(sync=True)
+    _x_min  = _tr.Float(0.0).tag(sync=True)
+    _x_max  = _tr.Float(4000.0).tag(sync=True)
+
+    # ── molecular animation (one multiframe-XYZ string per mode) ─────────
+    _mol_frames  = _tr.List(_tr.Unicode()).tag(sync=True)
+    _mode_labels = _tr.List(_tr.Unicode()).tag(sync=True)
+
+    # ── layout ────────────────────────────────────────────────────────────
+    _width        = _tr.Int(800).tag(sync=True)
+    _height       = _tr.Int(480).tag(sync=True)
+    _inset_width  = _tr.Int(300).tag(sync=True)
+    _inset_height = _tr.Int(250).tag(sync=True)
+    _inset_css_str = _tr.Unicode("top:10px;right:10px;").tag(sync=True)
+    _formula      = _tr.Unicode("").tag(sync=True)
+
+
 # ── public class ─────────────────────────────────────────────────────────────
 
 class MolVisualizerWidget:
@@ -514,11 +804,12 @@ class MolVisualizerWidget:
         inset_width: int = 300,
         inset_height: int = 250,
         loc: "str | int" = "best",
-        background: str = _DEFAULT_BG,
-    ):
+    ) -> LinkedViewWidget:
         """
-        Display a linked view for Jupyter: IR spectrum with an animated
-        molecular viewer inset.
+        Return a linked view: IR spectrum with an animated molecular viewer
+        inset.
+
+        Works in both JupyterLab and Marimo via anywidget.
 
         A dropdown selects the vibrational mode.  The spectrum panel shows the
         Lorentzian-broadened envelope plus stick spectrum; the selected mode's
@@ -536,7 +827,7 @@ class MolVisualizerWidget:
         x_min, x_max : float, optional
             Wavenumber axis limits.  Default: auto (±200 cm⁻¹ from data range).
         width, height : int
-            Pixel dimensions of the overall panel (spectrum background).
+            Pixel dimensions of the overall panel.
         inset_width, inset_height : int
             Pixel dimensions of the molecule viewer inset.
         loc : str or int
@@ -544,7 +835,7 @@ class MolVisualizerWidget:
             ``legend(loc=...)`` argument:
 
             * ``'best'`` (default) — auto-selects the corner with the least
-              spectrum overlap, using the same approach as matplotlib.
+              spectrum overlap.
             * ``'upper right'`` / ``1``
             * ``'upper left'``  / ``2``
             * ``'lower left'``  / ``3``
@@ -555,24 +846,12 @@ class MolVisualizerWidget:
             * ``'lower center'``/ ``8``
             * ``'upper center'``/ ``9``
             * ``'center'``      / ``10``
-        background : str
-            3Dmol.js background colour string.  Use ``"transparent"`` for a
-            fully transparent molecule background (requires WebGL alpha support).
 
         Returns
         -------
-        ipywidgets.VBox
-            Combined widget ready to display in a Jupyter cell.
+        LinkedViewWidget
+            anywidget ready to display in Jupyter or Marimo.
         """
-        import base64
-        import io
-
-        import ipywidgets as widgets
-        import matplotlib.pyplot as plt
-        import py3Dmol
-        from IPython.display import HTML as ipy_HTML
-        from IPython.display import display as ipy_display
-
         self._require_geometry()
 
         modes = self.data["modes"]
@@ -583,140 +862,62 @@ class MolVisualizerWidget:
         _x_min = float(max(0.0, freqs.min() - 200)) if x_min is None else x_min
         _x_max = float(freqs.max() + 200) if x_max is None else x_max
 
-        # Precompute Lorentzian envelope once (normalised to 0-100 %)
+        # Lorentzian envelope, normalised to 0–100 %
         x_pts = np.linspace(_x_min, _x_max, 2000)
         gamma = fwhm / 2.0
         y_pts = np.zeros_like(x_pts)
         for f, I in zip(freqs, intensities):
             y_pts += I * gamma**2 / ((x_pts - f)**2 + gamma**2)
         y_max = y_pts.max() if y_pts.max() > 0 else 1.0
-        y_norm = y_pts / y_max * 100           # 0–100 %
+        y_norm = y_pts / y_max * 100
         i_norm = intensities / max_intensity * 100
 
-        # Resolve loc (validate + compute best if requested)
+        # Resolve inset location
         _loc = _validate_loc(loc)
         if _loc == "best":
             _loc = _best_inset_loc(
                 x_pts, y_norm, freqs, i_norm,
                 _x_min, _x_max, width, height, inset_width, inset_height,
             )
-        inset_edge = _inset_css(_loc, width, height, inset_width, inset_height)
+        inset_css = _inset_css(_loc, width, height, inset_width, inset_height)
 
-        # ── dropdown ─────────────────────────────────────────────────────────
-        options = [
-            (
-                f"Mode {m['mode']}: {m['frequency']:.1f} cm⁻¹"
-                f"  ({m['intensity']:.1f} km/mol)",
-                i,
-            )
-            for i, m in enumerate(modes)
+        # Build one multiframe-XYZ string per mode (empty string if no displacements)
+        atoms = self.data["atoms"]
+        symbols = [a["symbol"] for a in atoms]
+        coords0 = np.array([[a["x"], a["y"], a["z"]] for a in atoms])
+        mol_frames = []
+        for mi, mode in enumerate(modes):
+            if "displacements" in mode:
+                disps = np.array(mode["displacements"])
+                frames = _cosine_frames(coords0, disps, amplitude, n_frames)
+                mol_frames.append(_make_multiframe_xyz(symbols, frames))
+            else:
+                # Static single-frame fallback when displacements are absent
+                mol_frames.append(_make_multiframe_xyz(symbols, [coords0]))
+
+        mode_labels = [
+            f"Mode {m['mode']}: {m['frequency']:.1f} cm\u207b\u00b9"
+            f"  ({m['intensity']:.1f} km/mol)"
+            for m in modes
         ]
-        dropdown = widgets.Dropdown(
-            options=options,
-            description="Mode:",
-            layout=widgets.Layout(width=f"{width}px"),
-            style={"description_width": "initial"},
+
+        return LinkedViewWidget(
+            mode_index=0,
+            _x_pts=x_pts.tolist(),
+            _y_norm=y_norm.tolist(),
+            _freqs=freqs.tolist(),
+            _i_norm=i_norm.tolist(),
+            _x_min=_x_min,
+            _x_max=_x_max,
+            _mol_frames=mol_frames,
+            _mode_labels=mode_labels,
+            _width=width,
+            _height=height,
+            _inset_width=inset_width,
+            _inset_height=inset_height,
+            _inset_css_str=inset_css,
+            _formula=self.data.get("formula", ""),
         )
-
-        output = widgets.Output()
-
-        # ── spectrum → PNG base64 ────────────────────────────────────────────
-
-        def _spec_png_b64(mode_idx: int) -> str:
-            fig, ax = plt.subplots(figsize=(width / 100, height / 100), dpi=100)
-
-            ax.plot(x_pts, y_norm, color="#2563eb", linewidth=1.5, zorder=2)
-
-            for i, (f, I) in enumerate(zip(freqs, i_norm)):
-                if _x_min <= f <= _x_max:
-                    selected = i == mode_idx
-                    ax.vlines(
-                        f, 0, I,
-                        colors="#cc3333" if selected else "#aaaaaa",
-                        linewidths=2.5 if selected else 1.0,
-                        zorder=4 if selected else 1,
-                    )
-
-            ax.axvline(freqs[mode_idx], color="#cc3333",
-                       linestyle="--", linewidth=0.8, alpha=0.45, zorder=1)
-
-            ax.set_xlim(_x_min, _x_max)
-            ax.set_ylim(0, 110)
-            ax.set_xlabel("Wavenumber (cm⁻¹)")
-            ax.set_ylabel("Relative Intensity (%)")
-            formula = self.data.get("formula", "")
-            ax.set_title(f"IR Spectrum{' — ' + formula if formula else ''}")
-            ax.tick_params(direction="in", which="both")
-
-            plt.tight_layout()
-            buf = io.BytesIO()
-            fig.savefig(buf, format="png", dpi=100)
-            plt.close(fig)
-            buf.seek(0)
-            return base64.b64encode(buf.read()).decode()
-
-        # ── molecule inset HTML ───────────────────────────────────────────────
-
-        def _mol_html(mode_idx: int) -> str:
-            """Return py3Dmol HTML string with transparent background."""
-            self._require_displacements(mode_idx)
-            atoms = self.data["atoms"]
-            mode = modes[mode_idx]
-            symbols = [a["symbol"] for a in atoms]
-            coords0 = np.array([[a["x"], a["y"], a["z"]] for a in atoms])
-            disps = np.array(mode["displacements"])
-            frames = _cosine_frames(coords0, disps, amplitude, n_frames)
-
-            view = py3Dmol.view(width=inset_width, height=inset_height)
-            view.setBackgroundColor("0x000000", 0)   # transparent (alpha=0)
-            view.addModelsAsFrames(
-                _make_multiframe_xyz(symbols, frames), "xyz"
-            )
-            _apply_ball_and_stick(view)
-            view.zoomTo()
-            view.animate({"loop": "forward", "reps": 0, "step": 1})
-            view.render()
-
-            html = view._make_html()
-            # Enable WebGL alpha channel; py3Dmol hard-codes
-            # {backgroundColor:"white"} in createViewer — patch it here.
-            return html.replace(
-                '{backgroundColor:"white"}',
-                '{backgroundColor:"white",alpha:true}',
-            )
-
-        # ── combined HTML ─────────────────────────────────────────────────────
-
-        def _render(mode_idx: int) -> None:
-            spec_b64 = _spec_png_b64(mode_idx)
-            mol = _mol_html(mode_idx)
-
-            combined = (
-                f'<div style="position:relative;width:{width}px;'
-                f'display:inline-block;line-height:0;">\n'
-                f'  <img src="data:image/png;base64,{spec_b64}"'
-                f'       style="width:{width}px;display:block;" />\n'
-                f'  <div style="position:absolute;{inset_edge}'
-                f'width:{inset_width}px;height:{inset_height}px;'
-                f'border-radius:6px;overflow:hidden;">\n'
-                f'    {mol}\n'
-                f'  </div>\n'
-                f'</div>'
-            )
-
-            output.clear_output(wait=True)
-            with output:
-                ipy_display(ipy_HTML(combined))
-
-        # ── wire up and initialise ────────────────────────────────────────────
-
-        dropdown.observe(
-            lambda c: _render(c["new"]) if c["name"] == "value" else None,
-            names="value",
-        )
-        _render(0)
-
-        return widgets.VBox([dropdown, output])
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
