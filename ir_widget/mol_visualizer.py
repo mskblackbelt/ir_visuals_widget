@@ -797,52 +797,57 @@ function render({ model, el }) {
 
   let viewer = null;
   let orbInitialized = false;
-  let _updateSeq = 0;  // incremented on every updateOrbital call; stale continuations bail out
+  let _updateSeq = 0;
 
-  function applyBallAndStick() {
-    viewer.setStyle({}, { sphere: { scale: 0.4, colorscheme: 'Jmol' }, stick: { radius: 0.20 } });
-    viewer.setStyle({ elem: 'H' }, { sphere: { scale: 0.3, color: 'white' }, stick: { radius: 0.20, color: 'white' } });
+  function applyBallAndStick(v) {
+    v.setStyle({}, { sphere: { scale: 0.4, colorscheme: 'Jmol' }, stick: { radius: 0.20 } });
+    v.setStyle({ elem: 'H' }, { sphere: { scale: 0.3, color: 'white' }, stick: { radius: 0.20, color: 'white' } });
   }
 
   async function updateOrbital() {
-    if (!viewer) return;
-    // Read current cube string fresh from model — Python observer keeps it current.
+    // 3Dmol must be loaded before we can do anything.
+    if (!window.$3Dmol) return;
     const cube   = model.get('_cube_string');
     const molXyz = model.get('_mol_xyz');
     if (!cube) return;
 
-    // Claim this update slot; any previous in-flight call will see a stale seq.
+    // Claim this update slot; stale continuations bail out when they check seq.
     const seq = ++_updateSeq;
 
-    try { viewer.removeAllSurfaces(); } catch (_) {}
-    viewer.removeAllModels();
-    if (molXyz) { viewer.addModel(molXyz, 'xyz'); }
-    applyBallAndStick();
-    if (!orbInitialized) { viewer.zoomTo({}, 0); orbInitialized = true; }
-    // Save camera before async surface computation to prevent auto-fit reset.
-    const camState = viewer.getView();
-    viewer.render();   // show atoms immediately while surfaces compute
+    // Capture the current camera *before* tearing down the viewer so we can
+    // restore it after the new orbital is rendered.
+    const camState = (viewer && orbInitialized) ? viewer.getView() : null;
+
+    // Recreate the viewer from scratch.  This is the most reliable way to
+    // clear old isosurfaces: 3Dmol's removeAllSurfaces() misses surfaces that
+    // are still in the async compute queue, causing compositing artefacts.
+    molDiv.innerHTML = '';
+    const v = window.$3Dmol.createViewer(molDiv, {});
+    viewer = v;
+    v.setBackgroundColor(0xe6e6e6);
+    v.resize();
+
+    if (molXyz) { v.addModel(molXyz, 'xyz'); }
+    applyBallAndStick(v);
+    if (!orbInitialized) { v.zoomTo({}, 0); orbInitialized = true; }
+    else if (camState) { v.setView(camState); }
+    v.render();   // show atoms immediately while isosurfaces compute
+
+    if (seq !== _updateSeq) return;  // superseded before any async work
 
     const vol = new $3Dmol.VolumeData(cube, 'cube');
-    await viewer.addIsosurface(vol, { isoval:  isovalue, color: posColor, opacity: opacity });
-    // If a newer call started while we were awaiting, remove the stale surface we
-    // just added and abort — the newer call will render the correct orbital.
-    if (seq !== _updateSeq) { try { viewer.removeAllSurfaces(); viewer.render(); } catch (_) {} return; }
+    await v.addIsosurface(vol, { isoval:  isovalue, color: posColor, opacity: opacity });
+    if (seq !== _updateSeq) return;  // a newer call has already replaced the viewer
 
-    await viewer.addIsosurface(vol, { isoval: -isovalue, color: negColor, opacity: opacity });
-    if (seq !== _updateSeq) { try { viewer.removeAllSurfaces(); viewer.render(); } catch (_) {} return; }
+    await v.addIsosurface(vol, { isoval: -isovalue, color: negColor, opacity: opacity });
+    if (seq !== _updateSeq) return;
 
-    viewer.setView(camState);
-    viewer.render();
+    if (camState) { v.setView(camState); }
+    v.render();
   }
 
   ensure3Dmol().then(() => {
-    viewer = window.$3Dmol.createViewer(molDiv, {});
-    viewer.setBackgroundColor(0xe6e6e6);
-    requestAnimationFrame(() => {
-      viewer.resize();
-      updateOrbital();
-    });
+    updateOrbital();
   }).catch(() => {
     molDiv.innerHTML = '<span style="color:#cc3333;font-size:12px;padding:8px;">3Dmol.js failed to load</span>';
   });
