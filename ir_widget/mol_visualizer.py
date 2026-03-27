@@ -511,6 +511,7 @@ function render({ model, el }) {
 
   // ── 3Dmol viewer ─────────────────────────────────────────────────────────
   let viewer = null;
+  let molInitialized = false;
 
   function applyBallAndStick() {
     viewer.setStyle({}, { sphere: { scale: 0.4, colorscheme: 'Jmol' }, stick: { radius: 0.20 } });
@@ -525,7 +526,7 @@ function render({ model, el }) {
     viewer.removeAllModels();
     viewer.addModelsAsFrames(frames, 'xyz');
     applyBallAndStick();
-    viewer.zoomTo({}, 0);          // instant zoom (duration=0), no camera animation
+    if (!molInitialized) { viewer.zoomTo({}, 0); molInitialized = true; }
     viewer.animate({ loop: 'forward', reps: 0, step: 1, interval: 40 });
   }
 
@@ -600,6 +601,273 @@ class LinkedViewWidget(anywidget.AnyWidget):
     _inset_height = _tr.Int(250).tag(sync=True)
     _inset_css_str = _tr.Unicode("top:10px;right:10px;").tag(sync=True)
     _formula      = _tr.Unicode("").tag(sync=True)
+
+
+# ── ModeViewWidget (anywidget) ────────────────────────────────────────────────
+
+_MODE_VIEW_JS = r"""
+const _3DMOL_SRC = 'https://cdn.jsdelivr.net/npm/3dmol@2.5.4/build/3Dmol-min.js';
+
+let _3dmolPromise = null;
+
+function ensure3Dmol() {
+  if (_3dmolPromise) return _3dmolPromise;
+  _3dmolPromise = new Promise((resolve, reject) => {
+    if (window.$3Dmol) { resolve(window.$3Dmol); return; }
+    const s = document.createElement('script');
+    s.src = _3DMOL_SRC;
+    s.onload  = () => resolve(window.$3Dmol);
+    s.onerror = () => { _3dmolPromise = null; reject(new Error('3Dmol.js failed to load')); };
+    document.head.appendChild(s);
+  });
+  return _3dmolPromise;
+}
+
+function render({ model, el }) {
+  const W         = model.get('_width');
+  const H         = model.get('_height');
+  const molFrames = model.get('_mol_frames');
+  const labels    = model.get('_mode_labels');
+  const formula   = model.get('_formula');
+
+  el.style.cssText = 'display:inline-block;font-family:sans-serif;';
+
+  // ── dropdown row ─────────────────────────────────────────────────────────
+  const selectWrapper = document.createElement('div');
+  selectWrapper.style.cssText = `display:flex;align-items:center;gap:8px;margin-bottom:6px;width:${W}px;`;
+
+  const selectLabel = document.createElement('label');
+  selectLabel.textContent = 'Mode:';
+  selectLabel.style.cssText = 'font-size:13px;font-weight:bold;white-space:nowrap;';
+
+  const selectEl = document.createElement('select');
+  selectEl.style.cssText = 'flex:1;padding:4px 8px;font-size:13px;border:1px solid #ccc;border-radius:4px;background:#fff;cursor:pointer;';
+  labels.forEach((label, i) => {
+    const opt = document.createElement('option');
+    opt.value = String(i);
+    opt.textContent = label;
+    selectEl.appendChild(opt);
+  });
+  selectEl.value = String(model.get('mode_index'));
+  selectWrapper.appendChild(selectLabel);
+  selectWrapper.appendChild(selectEl);
+
+  // ── 3Dmol viewer ─────────────────────────────────────────────────────────
+  const molDiv = document.createElement('div');
+  molDiv.style.cssText = `width:${W}px;height:${H}px;border-radius:6px;overflow:hidden;`;
+
+  el.appendChild(selectWrapper);
+  el.appendChild(molDiv);
+
+  let viewer = null;
+  let molInitialized = false;
+
+  function applyBallAndStick() {
+    viewer.setStyle({}, { sphere: { scale: 0.4, colorscheme: 'Jmol' }, stick: { radius: 0.20 } });
+    viewer.setStyle({ elem: 'H' }, { sphere: { scale: 0.3, color: 'white' }, stick: { radius: 0.20, color: 'white' } });
+  }
+
+  function updateMol(modeIdx) {
+    if (!viewer) return;
+    const frames = molFrames[modeIdx];
+    if (!frames) return;
+    viewer.stopAnimate();
+    viewer.removeAllModels();
+    viewer.addModelsAsFrames(frames, 'xyz');
+    applyBallAndStick();
+    if (!molInitialized) { viewer.zoomTo({}, 0); molInitialized = true; }
+    viewer.animate({ loop: 'forward', reps: 0, step: 1, interval: 40 });
+  }
+
+  ensure3Dmol().then(() => {
+    viewer = window.$3Dmol.createViewer(molDiv, {});
+    viewer.setBackgroundColor(0xe6e6e6);
+    requestAnimationFrame(() => {
+      viewer.resize();
+      updateMol(model.get('mode_index'));
+    });
+  }).catch(() => {
+    molDiv.innerHTML = '<span style="color:#cc3333;font-size:12px;padding:8px;">3Dmol.js failed to load</span>';
+  });
+
+  selectEl.addEventListener('change', e => {
+    const idx = parseInt(e.target.value, 10);
+    model.set('mode_index', idx);
+    model.save_changes();
+    updateMol(idx);
+  });
+
+  model.on('change:mode_index', () => {
+    const idx = model.get('mode_index');
+    selectEl.value = String(idx);
+    updateMol(idx);
+  });
+
+  return () => {
+    if (viewer) { try { viewer.stopAnimate(); viewer.removeAllModels(); } catch (_) {} }
+  };
+}
+
+export default { render };
+"""
+
+
+class ModeViewWidget(anywidget.AnyWidget):
+    """
+    Animated molecular viewer with a mode-selection dropdown.
+
+    Works in both JupyterLab and Marimo.  Instantiate via
+    :meth:`MolVisualizerWidget.view_mode_selector`.
+    """
+
+    _esm = _MODE_VIEW_JS
+
+    #: Currently selected mode (0-based).
+    mode_index = _tr.Int(0).tag(sync=True)
+
+    _mol_frames  = _tr.List(_tr.Unicode()).tag(sync=True)
+    _mode_labels = _tr.List(_tr.Unicode()).tag(sync=True)
+    _width       = _tr.Int(500).tag(sync=True)
+    _height      = _tr.Int(400).tag(sync=True)
+    _formula     = _tr.Unicode("").tag(sync=True)
+
+
+# ── OrbitalViewWidget (anywidget) ─────────────────────────────────────────────
+
+_ORBITAL_VIEW_JS = r"""
+const _3DMOL_SRC = 'https://cdn.jsdelivr.net/npm/3dmol@2.5.4/build/3Dmol-min.js';
+
+let _3dmolPromise = null;
+
+function ensure3Dmol() {
+  if (_3dmolPromise) return _3dmolPromise;
+  _3dmolPromise = new Promise((resolve, reject) => {
+    if (window.$3Dmol) { resolve(window.$3Dmol); return; }
+    const s = document.createElement('script');
+    s.src = _3DMOL_SRC;
+    s.onload  = () => resolve(window.$3Dmol);
+    s.onerror = () => { _3dmolPromise = null; reject(new Error('3Dmol.js failed to load')); };
+    document.head.appendChild(s);
+  });
+  return _3dmolPromise;
+}
+
+function render({ model, el }) {
+  const W           = model.get('_width');
+  const H           = model.get('_height');
+  const cubeStrings = model.get('_cube_strings');
+  const labels      = model.get('_orbital_labels');
+  const isovalue    = model.get('_isovalue');
+  const opacity     = model.get('_opacity');
+  const posColor    = model.get('_pos_color');
+  const negColor    = model.get('_neg_color');
+
+  el.style.cssText = 'display:inline-block;font-family:sans-serif;';
+
+  // ── dropdown row ─────────────────────────────────────────────────────────
+  const selectWrapper = document.createElement('div');
+  selectWrapper.style.cssText = `display:flex;align-items:center;gap:8px;margin-bottom:6px;width:${W}px;`;
+
+  const selectLabel = document.createElement('label');
+  selectLabel.textContent = 'Orbital:';
+  selectLabel.style.cssText = 'font-size:13px;font-weight:bold;white-space:nowrap;';
+
+  const selectEl = document.createElement('select');
+  selectEl.style.cssText = 'flex:1;padding:4px 8px;font-size:13px;border:1px solid #ccc;border-radius:4px;background:#fff;cursor:pointer;';
+  labels.forEach((label, i) => {
+    const opt = document.createElement('option');
+    opt.value = String(i);
+    opt.textContent = label;
+    selectEl.appendChild(opt);
+  });
+  selectEl.value = String(model.get('orbital_index'));
+  selectWrapper.appendChild(selectLabel);
+  selectWrapper.appendChild(selectEl);
+
+  // ── 3Dmol viewer ─────────────────────────────────────────────────────────
+  const molDiv = document.createElement('div');
+  molDiv.style.cssText = `width:${W}px;height:${H}px;border-radius:6px;overflow:hidden;`;
+
+  el.appendChild(selectWrapper);
+  el.appendChild(molDiv);
+
+  let viewer = null;
+  let orbInitialized = false;
+
+  function applyBallAndStick() {
+    viewer.setStyle({}, { sphere: { scale: 0.4, colorscheme: 'Jmol' }, stick: { radius: 0.20 } });
+    viewer.setStyle({ elem: 'H' }, { sphere: { scale: 0.3, color: 'white' }, stick: { radius: 0.20, color: 'white' } });
+  }
+
+  function updateOrbital(idx) {
+    if (!viewer) return;
+    const cube = cubeStrings[idx];
+    if (!cube) return;
+    viewer.removeAllSurfaces();
+    viewer.removeAllModels();
+    viewer.addModel(cube, 'cube');
+    applyBallAndStick();
+    viewer.addVolumetricData(cube, 'cube', { isoval:  isovalue, color: posColor, opacity: opacity });
+    viewer.addVolumetricData(cube, 'cube', { isoval: -isovalue, color: negColor, opacity: opacity });
+    if (!orbInitialized) { viewer.zoomTo({}, 0); orbInitialized = true; }
+    viewer.render();
+  }
+
+  ensure3Dmol().then(() => {
+    viewer = window.$3Dmol.createViewer(molDiv, {});
+    viewer.setBackgroundColor(0xe6e6e6);
+    requestAnimationFrame(() => {
+      viewer.resize();
+      updateOrbital(model.get('orbital_index'));
+    });
+  }).catch(() => {
+    molDiv.innerHTML = '<span style="color:#cc3333;font-size:12px;padding:8px;">3Dmol.js failed to load</span>';
+  });
+
+  selectEl.addEventListener('change', e => {
+    const idx = parseInt(e.target.value, 10);
+    model.set('orbital_index', idx);
+    model.save_changes();
+    updateOrbital(idx);
+  });
+
+  model.on('change:orbital_index', () => {
+    const idx = model.get('orbital_index');
+    selectEl.value = String(idx);
+    updateOrbital(idx);
+  });
+
+  return () => {
+    if (viewer) { try { viewer.removeAllSurfaces(); viewer.removeAllModels(); } catch (_) {} }
+  };
+}
+
+export default { render };
+"""
+
+
+class OrbitalViewWidget(anywidget.AnyWidget):
+    """
+    Molecular orbital viewer with an orbital-selection dropdown.
+
+    Renders dual ±isosurface lobes from pre-loaded Gaussian ``.cube`` file
+    contents.  Works in both JupyterLab and Marimo.  Instantiate via
+    :meth:`MolVisualizerWidget.view_orbital_selector`.
+    """
+
+    _esm = _ORBITAL_VIEW_JS
+
+    #: Currently selected orbital (0-based index into the cube_files list).
+    orbital_index = _tr.Int(0).tag(sync=True)
+
+    _cube_strings   = _tr.List(_tr.Unicode()).tag(sync=True)
+    _orbital_labels = _tr.List(_tr.Unicode()).tag(sync=True)
+    _isovalue       = _tr.Float(0.02).tag(sync=True)
+    _opacity        = _tr.Float(0.7).tag(sync=True)
+    _pos_color      = _tr.Unicode("blue").tag(sync=True)
+    _neg_color      = _tr.Unicode("red").tag(sync=True)
+    _width          = _tr.Int(500).tag(sync=True)
+    _height         = _tr.Int(400).tag(sync=True)
 
 
 # ── public class ─────────────────────────────────────────────────────────────
@@ -881,25 +1149,7 @@ class MolVisualizerWidget:
             )
         inset_css = _inset_css(_loc, width, height, inset_width, inset_height)
 
-        # Build one multiframe-XYZ string per mode (empty string if no displacements)
-        atoms = self.data["atoms"]
-        symbols = [a["symbol"] for a in atoms]
-        coords0 = np.array([[a["x"], a["y"], a["z"]] for a in atoms])
-        mol_frames = []
-        for mi, mode in enumerate(modes):
-            if "displacements" in mode:
-                disps = np.array(mode["displacements"])
-                frames = _cosine_frames(coords0, disps, amplitude, n_frames)
-                mol_frames.append(_make_multiframe_xyz(symbols, frames))
-            else:
-                # Static single-frame fallback when displacements are absent
-                mol_frames.append(_make_multiframe_xyz(symbols, [coords0]))
-
-        mode_labels = [
-            f"Mode {m['mode']}: {m['frequency']:.1f} cm\u207b\u00b9"
-            f"  ({m['intensity']:.1f} km/mol)"
-            for m in modes
-        ]
+        mol_frames, mode_labels = self._compute_mol_frames(amplitude, n_frames)
 
         return LinkedViewWidget(
             mode_index=0,
@@ -919,7 +1169,166 @@ class MolVisualizerWidget:
             _formula=self.data.get("formula", ""),
         )
 
+    def view_mode_selector(
+        self,
+        amplitude: float = 0.5,
+        n_frames: int = 30,
+        width: int = 500,
+        height: int = 400,
+    ) -> ModeViewWidget:
+        """
+        Return a standalone molecular animation viewer with a mode dropdown.
+
+        Shows the molecule animating the selected vibrational mode.  For the
+        combined spectrum + animation view see :meth:`view_linked`.
+
+        Parameters
+        ----------
+        amplitude : float
+            Maximum vibrational displacement amplitude in Å.
+        n_frames : int
+            Animation frames per oscillation cycle.
+        width, height : int
+            Viewer dimensions in pixels.
+
+        Returns
+        -------
+        ModeViewWidget
+            anywidget ready to display in Jupyter or Marimo.
+        """
+        self._require_geometry()
+
+        mol_frames, mode_labels = self._compute_mol_frames(amplitude, n_frames)
+        return ModeViewWidget(
+            mode_index=0,
+            _mol_frames=mol_frames,
+            _mode_labels=mode_labels,
+            _width=width,
+            _height=height,
+            _formula=self.data.get("formula", ""),
+        )
+
+    def view_orbital_selector(
+        self,
+        cube_files: "list[str | pathlib.Path]",
+        labels: "list[str] | None" = None,
+        homo_index: "int | None" = None,
+        default_index: "int | None" = None,
+        isovalue: float = 0.02,
+        opacity: float = 0.7,
+        pos_color: str = "blue",
+        neg_color: str = "red",
+        width: int = 500,
+        height: int = 400,
+    ) -> OrbitalViewWidget:
+        """
+        Return a molecular orbital viewer with an orbital-selection dropdown.
+
+        Parameters
+        ----------
+        cube_files : list of str or path-like
+            Paths to Gaussian ``.cube`` files (or their contents as strings),
+            one per orbital, in ascending orbital-index order.
+        labels : list of str, optional
+            Display labels for each orbital.  If *None* and ``homo_index`` is
+            provided, labels are auto-generated (``'HOMO'``, ``'LUMO'``, …).
+            If both are *None*, labels default to ``'Orbital N'``.
+        homo_index : int, optional
+            0-based index into ``cube_files`` of the HOMO.  When provided,
+            ``default_index`` defaults to this value and labels are
+            auto-generated if ``labels`` is not given.
+        default_index : int, optional
+            Index of the orbital shown on first display.  Defaults to
+            ``homo_index`` (if given) or ``0``.
+        isovalue : float
+            Isosurface cutoff (absolute; both ±isovalue lobes are drawn).
+        opacity : float
+            Lobe transparency (0 = fully transparent, 1 = opaque).
+        pos_color, neg_color : str
+            3Dmol.js colour strings for the positive and negative lobes.
+        width, height : int
+            Viewer dimensions in pixels.
+
+        Returns
+        -------
+        OrbitalViewWidget
+            anywidget ready to display in Jupyter or Marimo.
+
+        Examples
+        --------
+        Generate cube files and display with HOMO as default::
+
+            psi4.set_options({'cubeprop_tasks': ['orbitals'],
+                              'cubeprop_orbitals': [19, 20, 21, 22, 23]})
+            psi4.cubeprop(wfn)   # HOMO is orbital 21 (= wfn.nalpha())
+
+            cube_files = [f'Psi_a_{n:03d}_{n}-A.cube' for n in [19, 20, 21, 22, 23]]
+            vis.view_orbital_selector(cube_files, homo_index=2)
+        """
+        n = len(cube_files)
+        if n == 0:
+            raise ValueError("cube_files must not be empty.")
+
+        # Build display labels
+        if labels is None:
+            if homo_index is not None:
+                labels = []
+                for i in range(n):
+                    delta = i - homo_index
+                    if delta == 0:
+                        labels.append("HOMO")
+                    elif delta == 1:
+                        labels.append("LUMO")
+                    elif delta > 1:
+                        labels.append(f"LUMO+{delta - 1}")
+                    elif delta == -1:
+                        labels.append("HOMO\u22121")
+                    else:
+                        labels.append(f"HOMO\u2212{-delta}")
+            else:
+                labels = [f"Orbital {i + 1}" for i in range(n)]
+
+        if default_index is None:
+            default_index = homo_index if homo_index is not None else 0
+
+        cube_strings = [_read_cube(cf) for cf in cube_files]
+
+        return OrbitalViewWidget(
+            orbital_index=default_index,
+            _cube_strings=cube_strings,
+            _orbital_labels=labels,
+            _isovalue=isovalue,
+            _opacity=opacity,
+            _pos_color=pos_color,
+            _neg_color=neg_color,
+            _width=width,
+            _height=height,
+        )
+
     # ── helpers ───────────────────────────────────────────────────────────────
+
+    def _compute_mol_frames(
+        self, amplitude: float, n_frames: int
+    ) -> "tuple[list[str], list[str]]":
+        """Return (mol_frames, mode_labels) for the current modes."""
+        modes = self.data["modes"]
+        atoms = self.data["atoms"]
+        symbols = [a["symbol"] for a in atoms]
+        coords0 = np.array([[a["x"], a["y"], a["z"]] for a in atoms])
+        mol_frames = []
+        for mode in modes:
+            if "displacements" in mode:
+                disps = np.array(mode["displacements"])
+                frames = _cosine_frames(coords0, disps, amplitude, n_frames)
+                mol_frames.append(_make_multiframe_xyz(symbols, frames))
+            else:
+                mol_frames.append(_make_multiframe_xyz(symbols, [coords0]))
+        mode_labels = [
+            f"Mode {m['mode']}: {m['frequency']:.1f} cm\u207b\u00b9"
+            f"  ({m['intensity']:.1f} km/mol)"
+            for m in modes
+        ]
+        return mol_frames, mode_labels
 
     def _require_geometry(self):
         if "atoms" not in self.data or not self.data["atoms"]:
