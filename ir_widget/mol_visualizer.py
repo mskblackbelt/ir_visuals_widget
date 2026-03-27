@@ -756,6 +756,7 @@ function render({ model, el }) {
   const W           = model.get('_width');
   const H           = model.get('_height');
   const cubeStrings = model.get('_cube_strings');
+  const molXyz      = model.get('_mol_xyz');
   const labels      = model.get('_orbital_labels');
   const isovalue    = model.get('_isovalue');
   const opacity     = model.get('_opacity');
@@ -805,7 +806,10 @@ function render({ model, el }) {
     if (!cube) return;
     try { viewer.removeAllSurfaces(); } catch (_) {}
     viewer.removeAllModels();
-    viewer.addModel(cube, 'cube');
+    // Load atoms from the XYZ traitlet (reliable) rather than cube header.
+    // The cube file's atom section is not consistently parsed by all
+    // 3Dmol.js versions; XYZ always works.
+    if (molXyz) { viewer.addModel(molXyz, 'xyz'); }
     applyBallAndStick();
     if (!orbInitialized) { viewer.zoomTo({}, 0); orbInitialized = true; }
     // Snapshot camera BEFORE async surface computation — addIsosurface
@@ -870,6 +874,7 @@ class OrbitalViewWidget(anywidget.AnyWidget):
     orbital_index = _tr.Int(0).tag(sync=True)
 
     _cube_strings   = _tr.List(_tr.Unicode()).tag(sync=True)
+    _mol_xyz        = _tr.Unicode("").tag(sync=True)
     _orbital_labels = _tr.List(_tr.Unicode()).tag(sync=True)
     _isovalue       = _tr.Float(0.02).tag(sync=True)
     _opacity        = _tr.Float(0.7).tag(sync=True)
@@ -1051,9 +1056,12 @@ class MolVisualizerWidget:
         view = py3Dmol.view(width=width, height=height)
         view.setBackgroundColor(background)
 
-        # Add the molecule from the cube header (first 6 lines are metadata;
-        # py3Dmol/3Dmol.js parses the geometry embedded in the cube format)
-        view.addModel(cube_str, "cube")
+        # Load atoms from widget data (XYZ) — the cube format's atom section
+        # is not reliably parsed by all 3Dmol.js/py3Dmol versions.
+        atoms = self.data["atoms"]
+        symbols = [a["symbol"] for a in atoms]
+        coords = np.array([[a["x"], a["y"], a["z"]] for a in atoms])
+        view.addModel(_make_xyz_frame(symbols, coords), "xyz")
         _apply_ball_and_stick(view)
 
         # Positive lobe
@@ -1300,11 +1308,18 @@ class MolVisualizerWidget:
         if default_index is None:
             default_index = homo_index if homo_index is not None else 0
 
+        self._require_geometry()
         cube_strings = [_read_cube(cf) for cf in cube_files]
+
+        atoms = self.data["atoms"]
+        symbols = [a["symbol"] for a in atoms]
+        coords = np.array([[a["x"], a["y"], a["z"]] for a in atoms])
+        mol_xyz = _make_xyz_frame(symbols, coords)
 
         return OrbitalViewWidget(
             orbital_index=default_index,
             _cube_strings=cube_strings,
+            _mol_xyz=mol_xyz,
             _orbital_labels=labels,
             _isovalue=isovalue,
             _opacity=opacity,
