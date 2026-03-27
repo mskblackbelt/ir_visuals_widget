@@ -803,14 +803,16 @@ function render({ model, el }) {
     if (!viewer) return;
     const cube = cubeStrings[idx];
     if (!cube) return;
-    viewer.removeAllSurfaces();
+    try { viewer.removeAllSurfaces(); } catch (_) {}
     viewer.removeAllModels();
     viewer.addModel(cube, 'cube');
     applyBallAndStick();
-    viewer.addVolumetricData(cube, 'cube', { isoval:  isovalue, color: posColor, opacity: opacity });
-    viewer.addVolumetricData(cube, 'cube', { isoval: -isovalue, color: negColor, opacity: opacity });
     if (!orbInitialized) { viewer.zoomTo({}, 0); orbInitialized = true; }
-    viewer.render();
+    viewer.render();   // render atoms immediately; surfaces follow asynchronously
+    const vol = new $3Dmol.VolumeData(cube, 'cube');
+    viewer.addIsosurface(vol, { isoval:  isovalue, color: posColor, opacity: opacity });
+    viewer.addIsosurface(vol, { isoval: -isovalue, color: negColor, opacity: opacity });
+    // addIsosurface triggers its own render when computation completes
   }
 
   ensure3Dmol().then(() => {
