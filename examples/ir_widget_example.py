@@ -461,6 +461,26 @@ def _(vis):
     return
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Molecular Orbital Visualization
+
+    `view_orbital()` renders dual ±isosurface lobes from a Gaussian `.cube` file.
+    Generate cube files with `psi4.cubeprop()` before calling this:
+
+    ```python
+    psi4.set_options({'cubeprop_tasks': ['orbitals'],
+                      'cubeprop_orbitals': [4, 5, 6]})
+    psi4.cubeprop(wfn)              # writes e.g. Psi_a_005_5-A1.cube
+    vis.view_orbital('Psi_a_005_5-A1.cube', isovalue=0.05)
+    ```
+
+    Positive lobe: blue. Negative lobe: red. Both `isovalue`, `opacity`, and colours are adjustable.
+    """)
+    return
+
+
 @app.cell
 def _():
     return
