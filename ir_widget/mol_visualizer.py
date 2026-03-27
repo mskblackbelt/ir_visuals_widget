@@ -797,6 +797,7 @@ function render({ model, el }) {
 
   let viewer = null;
   let orbInitialized = false;
+  let _updateSeq = 0;  // incremented on every updateOrbital call; stale continuations bail out
 
   function applyBallAndStick() {
     viewer.setStyle({}, { sphere: { scale: 0.4, colorscheme: 'Jmol' }, stick: { radius: 0.20 } });
@@ -809,6 +810,10 @@ function render({ model, el }) {
     const cube   = model.get('_cube_string');
     const molXyz = model.get('_mol_xyz');
     if (!cube) return;
+
+    // Claim this update slot; any previous in-flight call will see a stale seq.
+    const seq = ++_updateSeq;
+
     try { viewer.removeAllSurfaces(); } catch (_) {}
     viewer.removeAllModels();
     if (molXyz) { viewer.addModel(molXyz, 'xyz'); }
@@ -820,7 +825,13 @@ function render({ model, el }) {
 
     const vol = new $3Dmol.VolumeData(cube, 'cube');
     await viewer.addIsosurface(vol, { isoval:  isovalue, color: posColor, opacity: opacity });
+    // If a newer call started while we were awaiting, remove the stale surface we
+    // just added and abort — the newer call will render the correct orbital.
+    if (seq !== _updateSeq) { try { viewer.removeAllSurfaces(); viewer.render(); } catch (_) {} return; }
+
     await viewer.addIsosurface(vol, { isoval: -isovalue, color: negColor, opacity: opacity });
+    if (seq !== _updateSeq) { try { viewer.removeAllSurfaces(); viewer.render(); } catch (_) {} return; }
+
     viewer.setView(camState);
     viewer.render();
   }
