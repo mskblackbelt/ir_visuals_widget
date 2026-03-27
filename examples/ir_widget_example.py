@@ -76,25 +76,41 @@ def _(Path):
 
 
 @app.cell
-def _(psi4):
-    h3o = psi4.geometry("""
-      1 1
-      O  0.0000  0.0000  0.0000
-      H  0.9200 -0.5300  0.0000
-      H -0.9200 -0.5200  0.0000
-      H  0.0000  1.0600  0.0000
-    """)
-    psi4.set_options({'reference': 'rhf'})
-    psi4.optimize('hf/6-31g(d,p)', molecule=h3o)
-    energy, wfn = psi4.frequency('hf/6-31g(d,p)', molecule=h3o, return_wfn=True)
-    print(f'HF/6-31G(d,p) energy: {energy:.6f} Eh')
-    return (wfn,)
+def _(IRWidget, psi4):
+    import json, pathlib
+
+    _data_cache = pathlib.Path('h3o_data.json')
+    _wfn_cache = pathlib.Path('h3o_wfn')
+
+    if _data_cache.exists() and pathlib.Path('h3o_wfn.npy').exists():
+        h3o_data = json.loads(_data_cache.read_text())
+        wfn = psi4.core.Wavefunction.from_file(str(_wfn_cache))
+        print(f"Restored H3O⁺ from cache ({len(h3o_data['modes'])} modes)")
+    else:
+        h3o = psi4.geometry("""
+          1 1
+          O  0.0000  0.0000  0.0000
+          H  0.9200 -0.5300  0.0000
+          H -0.9200 -0.5200  0.0000
+          H  0.0000  1.0600  0.0000
+        """)
+        psi4.set_options({'reference': 'rhf'})
+        psi4.optimize('hf/6-31g(d,p)', molecule=h3o)
+        energy, wfn = psi4.frequency('hf/6-31g(d,p)', molecule=h3o, return_wfn=True)
+        print(f'HF/6-31G(d,p) energy: {energy:.6f} Eh')
+
+        _tmp = IRWidget()
+        _tmp.load_from_psi4_wfn(wfn)
+        _data_cache.write_text(json.dumps(_tmp.data))
+        wfn.to_file(str(_wfn_cache))
+        h3o_data = _tmp.data
+    return h3o_data, json, pathlib
 
 
 @app.cell
-def _(IRWidget, wfn):
+def _(IRWidget, h3o_data):
     widget_h3o = IRWidget()
-    widget_h3o.load_from_psi4_wfn(wfn)
+    widget_h3o.data = h3o_data
     widget_h3o.broadening = 'lorentzian'
     widget_h3o.fwhm = 20.0
     widget_h3o
@@ -212,39 +228,52 @@ def _(mo):
 
 
 @app.cell
-def _(psi4):
-    psi4.core.set_output_file('benzene_freq.dat', False)
+def _(IRWidget, json, pathlib, psi4):
+    # import json, pathlib
 
-    benzene = psi4.geometry("""
-      0 1
-      C  0.0000  1.3970  0.0000
-      C  1.2095  0.6985  0.0000
-      C  1.2095 -0.6985  0.0000
-      C  0.0000 -1.3970  0.0000
-      C -1.2095 -0.6985  0.0000
-      C -1.2095  0.6985  0.0000
-      H  0.0000  2.4840  0.0000
-      H  2.1510  1.2420  0.0000
-      H  2.1510 -1.2420  0.0000
-      H  0.0000 -2.4840  0.0000
-      H -2.1510 -1.2420  0.0000
-      H -2.1510  1.2420  0.0000
-      symmetry c1
-      units angstrom
-    """)
+    _data_cache = pathlib.Path('benzene_data.json')
+    _wfn_cache = pathlib.Path('benzene_wfn')
 
-    psi4.set_options({'reference': 'rhf', 'basis': '6-31g*', 'scf_type': 'df'})
-    psi4.set_memory('4 GB')
+    if _data_cache.exists() and pathlib.Path('benzene_wfn.npy').exists():
+        benz_data = json.loads(_data_cache.read_text())
+        wfn_benz = psi4.core.Wavefunction.from_file(str(_wfn_cache))
+        print(f"Restored benzene from cache ({len(benz_data['modes'])} modes)")
+    else:
+        psi4.core.set_output_file('benzene_freq.dat', False)
+        benzene = psi4.geometry("""
+          0 1
+          C  0.0000  1.3970  0.0000
+          C  1.2095  0.6985  0.0000
+          C  1.2095 -0.6985  0.0000
+          C  0.0000 -1.3970  0.0000
+          C -1.2095 -0.6985  0.0000
+          C -1.2095  0.6985  0.0000
+          H  0.0000  2.4840  0.0000
+          H  2.1510  1.2420  0.0000
+          H  2.1510 -1.2420  0.0000
+          H  0.0000 -2.4840  0.0000
+          H -2.1510 -1.2420  0.0000
+          H -2.1510  1.2420  0.0000
+          symmetry c1
+          units angstrom
+        """)
+        psi4.set_options({'reference': 'rhf', 'basis': '6-31g*', 'scf_type': 'df'})
+        psi4.set_memory('4 GB')
+        energy_benz, wfn_benz = psi4.frequency('hf/6-31g*', molecule=benzene, return_wfn=True)
+        print(f'HF/6-31G* energy: {energy_benz:.6f} Eh')
 
-    energy_benz, wfn_benz = psi4.frequency('hf/6-31g*', molecule=benzene, return_wfn=True)
-    print(f'HF/6-31G* energy: {energy_benz:.6f} Eh')
-    return (wfn_benz,)
+        _tmp = IRWidget()
+        _tmp.load_from_psi4_wfn(wfn_benz)
+        _data_cache.write_text(json.dumps(_tmp.data))
+        wfn_benz.to_file(str(_wfn_cache))
+        benz_data = _tmp.data
+    return benz_data, wfn_benz
 
 
 @app.cell
-def _(IRWidget, wfn_benz):
+def _(IRWidget, benz_data):
     widget_benz = IRWidget()
-    widget_benz.load_from_psi4_wfn(wfn_benz)
+    widget_benz.data = benz_data
     widget_benz.broadening = 'lorentzian'
     widget_benz.fwhm = 15.0
     widget_benz
@@ -302,17 +331,24 @@ def _(mo):
 
 
 @app.cell
-def _(psi4, wfn_benz):
-    homo_num = wfn_benz.nalpha()   # 21 for benzene
-    orb_list = list(range(homo_num - 2, homo_num + 3))   # HOMO-2 through LUMO+1
+def _(pathlib, psi4, wfn_benz):
+    # import pathlib
 
-    psi4.set_options({
-        'cubeprop_tasks': ['orbitals'],
-        'cubeprop_orbitals': orb_list,
-        'cubic_grid_spacing': [0.2, 0.2, 0.2],
-    })
-    psi4.cubeprop(wfn_benz)
-    print(f"Generated cube files for orbitals: {orb_list}")
+    homo_num = wfn_benz.nalpha()   # 21 for benzene
+    orb_list = list(range(homo_num - 5, homo_num + 6))   # HOMO-2 through LUMO+1
+    _ndigits = len(str(max(orb_list)))
+    _cube_files = [f'Psi_a_{n:0{_ndigits}d}_{n}-A.cube' for n in orb_list]
+
+    if all(pathlib.Path(f).exists() for f in _cube_files):
+        print(f"Using existing cube files for orbitals: {orb_list}")
+    else:
+        psi4.set_options({
+            'cubeprop_tasks': ['orbitals'],
+            'cubeprop_orbitals': orb_list,
+            'cubic_grid_spacing': [0.2, 0.2, 0.2],
+        })
+        psi4.cubeprop(wfn_benz)
+        print(f"Generated cube files for orbitals: {orb_list}")
     print(f"HOMO is orbital {homo_num}")
     return (orb_list,)
 
@@ -335,7 +371,7 @@ def _(vis_benz):
 @app.cell
 def _(cube_files, vis_benz):
     # Orbital viewer with dropdown — HOMO is shown by default
-    vis_benz.view_orbital_selector(cube_files, homo_index=2, isovalue=0.02)
+    vis_benz.view_orbital_selector(cube_files, homo_index=7, isovalue=0.02)
     return
 
 

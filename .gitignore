@@ -68,6 +68,10 @@ ipython_config.py
 psi.*.clean
 *.dat
 
+# Psi4 calculation cache files
+*_wfn.npy
+*_data.json
+
 
 # UV
 #   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
