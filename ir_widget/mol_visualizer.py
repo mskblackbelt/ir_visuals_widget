@@ -363,7 +363,7 @@ class MolVisualizerWidget:
         fwhm: float = 15.0,
         x_min: float | None = None,
         x_max: float | None = None,
-        width: int = 960,
+        width: int = 800,
         height: int = 480,
         inset_width: int = 300,
         inset_height: int = 250,
@@ -539,8 +539,7 @@ class MolVisualizerWidget:
                 f'       style="width:{width}px;display:block;" />\n'
                 f'  <div style="position:absolute;{inset_edge}'
                 f'width:{inset_width}px;height:{inset_height}px;'
-                f'border-radius:6px;overflow:hidden;'
-                f'box-shadow:0 2px 12px rgba(0,0,0,0.25);">\n'
+                f'border-radius:6px;overflow:hidden;">\n'
                 f'    {mol}\n'
                 f'  </div>\n'
                 f'</div>'
