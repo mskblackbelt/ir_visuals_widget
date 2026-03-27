@@ -64,8 +64,9 @@ cover/
 profile_default/
 ipython_config.py
 
-# Psi4 / Jupyter runtime artefacts
-timer.dat
+# Psi4 / runtime artefacts
+psi.*.clean
+*.dat
 
 
 # UV
@@ -145,6 +146,3 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
-
-# Psi4
-psi.*.clean
