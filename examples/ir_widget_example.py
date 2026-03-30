@@ -371,7 +371,7 @@ def _(vis_benz):
 @app.cell
 def _(cube_files, vis_benz):
     # Orbital viewer with dropdown — HOMO is shown by default
-    vis_benz.view_orbital_selector(cube_files, homo_index=7, isovalue=0.02)
+    vis_benz.view_orbital_selector(cube_files, homo_index=5, isovalue=0.02)
     return
 
 

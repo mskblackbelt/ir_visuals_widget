@@ -97,7 +97,7 @@ def _(vis_benz):
 @app.cell
 def _(vis_benz):
     """Mode selector — known working dropdown for comparison."""
-    vis_benz.view_mode_selector(amplitude=0.5)
+    vis_benz.view_mode_selector(amplitude=2.0)
     return
 
 
