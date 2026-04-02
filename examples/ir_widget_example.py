@@ -229,8 +229,6 @@ def _(mo):
 
 @app.cell
 def _(IRWidget, json, pathlib, psi4):
-    # import json, pathlib
-
     _data_cache = pathlib.Path('benzene_data.json')
     _wfn_cache = pathlib.Path('benzene_wfn')
 
