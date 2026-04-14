@@ -71,6 +71,7 @@ psi.*.clean
 # Psi4 calculation cache files
 *_wfn.npy
 *_data.json
+*.cube
 
 
 # UV
