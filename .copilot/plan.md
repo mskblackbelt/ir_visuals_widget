@@ -1,190 +1,140 @@
 # IR Vibrational Widget Implementation Plan
 
-**Status:** ✅ **COMPLETED** - February 12, 2026  
-**Version:** 1.0.0
+**Status:** ✅ Phase 1 & 2 COMPLETE — Phase 3 not started
+**Current version:** 1.0.0 (package version has not been bumped since Phase 2 landed)
 
 ## Problem Statement
-Create an anywidget for Jupyter/Marimo notebooks that:
-- Imports computational chemistry calculation data using cclib
-- Extracts IR vibrational frequency information
-- Displays a table of IR frequencies and intensities
-- Plots IR spectra
+Build a notebook-native (Jupyter + Marimo) toolkit for visualizing quantum
+chemistry vibrational/electronic-structure results without a server backend:
+- Parse calculation output (cclib) or pull data directly from a live Psi4
+  wavefunction
+- Display a table + spectrum of IR frequencies and intensities
+- Visualize the 3-D molecular structure, animate individual vibrational
+  normal modes, and render molecular orbital isosurfaces from `.cube` files
 
-## Approach
-Build a self-contained anywidget with:
-- Python backend: Uses cclib to parse quantum chemistry output files and extract vibrational data
-- JavaScript frontend: Renders an interactive table and IR spectrum plot using vanilla JS and HTML5 Canvas
+## Phase 1: IR Spectrum Widget ✅ COMPLETE (2026-02-12)
 
-## Workplan
+Self-contained anywidget with a Python backend (cclib parsing) and vanilla
+JS/Canvas frontend.
 
-### Phase 1: Setup and Dependencies ✅ COMPLETE
-- [x] Add cclib to pixi.toml dependencies
-- [x] Install dependencies
+- [x] `ir_widget/widget.py` — `IRWidget` class
+- [x] cclib-based `load_file()` parsing (Gaussian, ORCA, Psi4, NWChem, GAMESS,
+      Q-Chem, Molpro, MOPAC, …)
+- [x] Direct array loading via `load_data()`
+- [x] Molecular formula generation (Hill order)
+- [x] `ir_widget.js` — sortable frequency table + Canvas IR spectrum plot
+- [x] Three broadening modes: none (stick), Lorentzian, Gaussian
+- [x] `ir_widget.css` styling, responsive layout
+- [x] Sample data (`examples/sample_data.py`, 7 molecules), example notebooks
+      (Jupyter + Marimo), docs (`docs/GETTING_STARTED.md`,
+      `docs/IMPLEMENTATION_SUMMARY.md`)
 
-### Phase 2: Python Backend ✅ COMPLETE
-- [x] Create `ir_widget.py` with IRWidget class
-- [x] Implement cclib data parsing method to extract:
-  - Vibrational frequencies
-  - IR intensities
-  - Molecular formula (optional metadata)
-- [x] Add data validation and error handling
-- [x] Format data for transfer to frontend (JSON serialization)
+## Phase 2: Psi4 Integration + 3-D Molecular Visualization ✅ COMPLETE (2026-03-13 → 2026-04-14)
 
-### Phase 3: JavaScript Frontend ✅ COMPLETE
-- [x] Create `ir_widget.js` for rendering
-- [x] Implement frequency table display with:
-  - Mode number, frequency (cm⁻¹), intensity
-  - Sortable columns (click to sort)
-- [x] Implement IR spectrum plot:
-  - X-axis: Wavenumber (cm⁻¹), Y-axis: Intensity
-  - Stick spectrum, Lorentzian, and Gaussian broadening
-  - HTML5 Canvas rendering
-- [x] Add interactivity (sorting, responsive resize)
+Not part of the original plan — added after Phase 1 shipped. Two major
+additions to `IRWidget` plus an entirely new `mol_visualizer` module.
 
-### Phase 4: Styling ✅ COMPLETE
-- [x] Create `ir_widget.css` for widget styling
-- [x] Style table (clean, scientific appearance)
-- [x] Style plot container
-- [x] Add responsive layout
+### 2a. Direct Psi4 data path (`ir_widget/widget.py`)
+- [x] `load_from_psi4_wfn(wfn)` — extracts frequencies, IR intensities, atom
+      geometry, and Cartesian normal-mode displacement vectors straight from
+      a `psi4.frequency(..., return_wfn=True)` result via
+      `psi4.driver.qcdb.vib.harmonic_analysis`, bypassing cclib/file I/O
+      entirely (PsiAPI path, recommended for Psi4 1.10+)
+- [x] `run_psi4_frequency(geometry, method_basis, ...)` — runs the Psi4
+      calculation itself and feeds the result into `load_from_psi4_wfn`
+- [x] `_prepare_data()` extended to carry optional `atoms` (equilibrium
+      Cartesian coords) and per-mode `displacements`, consumed by
+      `mol_visualizer`
+- [x] Psi4 result caching in the example notebook to avoid re-running
+      expensive calculations on every Marimo reload
 
-### Phase 5: Testing and Documentation ✅ COMPLETE
-- [x] Test with sample data
-- [x] Create example notebooks (Jupyter + Marimo)
-- [x] Add inline documentation/comments
-- [x] Create comprehensive README
-- [x] Create GETTING_STARTED guide
-- [x] Create IMPLEMENTATION_SUMMARY
-- [x] Create CHANGELOG
+### 2b. `mol_visualizer.py` — py3Dmol-based 3-D viewers
+- [x] `MolVisualizerWidget` — factory built from an `IRWidget.data` dict
+  - [x] `view_structure()` — static ball-and-stick model (CPK/Jmol coloring,
+        proportional H spheres)
+  - [x] `view_mode(mode_index, amplitude, n_frames)` — single-mode animation
+        using cosine-envelope frames for a seamless animation loop
+  - [x] `view_orbital(cube_data, isovalue, ...)` — one-shot ± isosurface
+        render from a Gaussian `.cube` file
+  - [x] `view_linked(...)` — combined spectrum + animated-molecule inset,
+        with matplotlib-style `loc=` placement including an auto `'best'`
+        heuristic that minimizes overlap with spectrum ink
+  - [x] `view_mode_selector(...)` → `ModeViewWidget` — standalone animated
+        viewer with a mode-selection dropdown
+  - [x] `view_orbital_selector(cube_files, homo_index=..., ...)` →
+        `OrbitalViewWidget` — dropdown orbital viewer with HOMO/LUMO-relative
+        auto-labeling; only the active orbital's cube data is synced to JS
+        per selection change (keeps comm messages small)
+- [x] Three dedicated anywidget subclasses (`LinkedViewWidget`,
+      `ModeViewWidget`, `OrbitalViewWidget`), all exported from
+      `ir_widget/__init__.py`
+- [x] Marimo compatibility layer: `_make_iframe_html()` wraps the py3Dmol
+      viewer in an `<iframe srcdoc>` because Marimo's `renderHTML` silently
+      drops inline `<script>` tags (only `<script src>` is processed), so the
+      3Dmol.js CDN loader never fired outside an iframe's own browsing context
+- [x] Hardening against a long tail of 3Dmol/Marimo rendering bugs (see
+      git history 2026-03-26 → 2026-03-30 for the blow-by-blow):
+  - dropdown UI hidden behind 3Dmol's WebGL canvas stacking context (fixed
+    with `position:relative;z-index:1` on the control row)
+  - stale isosurfaces accumulating across rapid dropdown changes (fixed by
+    recreating the viewer per orbital change rather than trying to clear it)
+  - camera/zoom state getting reset on every mode/orbital switch (fixed by
+    capturing `getView()`/`setView()` around the swap)
+  - async isosurface compute races when switching orbitals quickly (fixed
+    with a monotonic `_updateSeq` guard so stale continuations bail out)
+  - atom coordinates loaded from XYZ rather than parsed out of the `.cube`
+    file, since cube-format atom parsing isn't reliable across
+    3Dmol.js/py3Dmol versions
 
-### Bonus: Sample Data ✅ COMPLETE
-- [x] Create sample_data.py with 7 pre-loaded molecules
-- [x] Add quick_test.py validation script
-- [x] Create PROJECT_COMPLETE.txt report
+### Dependencies added
+- `psi4`, `py3dmol`, `nglview` (superseded by py3dmol, still in pixi.toml),
+  `scipy`, `matplotlib`, `jupyter-marimo-proxy` (see `pixi.toml`)
 
-## Files Created
+## Phase 3: Not started
 
-### Core Widget (3 files)
-- `ir_widget.py` (7.2 KB) - Python backend with cclib integration
-- `ir_widget.js` (9.1 KB) - JavaScript frontend with canvas plotting
-- `ir_widget.css` (2.6 KB) - Professional styling
+Carried over / updated from the original "future enhancements" list — items
+already delivered in Phase 2 have been removed:
 
-### Supporting Code (2 files)
-- `sample_data.py` (5.1 KB) - 7 pre-loaded molecules (H₂O, CO₂, CH₄, NH₃, C₂H₄, C₆H₆, C₃H₆O)
-- `quick_test.py` (1.0 KB) - Quick validation script
-
-### Examples (2 files)
-- `ir_widget_example.py` (5.0 KB) - Marimo notebook with interactive controls
-- `ir_widget_example.ipynb` (5.4 KB) - Jupyter notebook
-
-### Documentation (4 files)
-- `README.md` (5.4 KB) - Complete user guide
-- `GETTING_STARTED.md` (4.8 KB) - Quick start tutorial
-- `IMPLEMENTATION_SUMMARY.md` (5.2 KB) - Technical details
-- `CHANGELOG.md` (3.0 KB) - Version history
-
-## Key Features Delivered
-
-✅ Parse 10+ quantum chemistry file formats via cclib  
-✅ Interactive sortable frequency table  
-✅ Canvas-based IR spectrum plot  
-✅ Three broadening types: stick, Lorentzian, Gaussian  
-✅ Customizable FWHM and wavenumber range  
-✅ Toggle table/plot visibility  
-✅ 7 sample molecules included  
-✅ Works in Jupyter and Marimo  
-✅ Comprehensive documentation  
-✅ All tests passing  
-
-## Usage Examples
-
-### Quick Start
-```bash
-# Test the widget
-pixi run python quick_test.py
-
-# Launch Marimo (interactive)
-pixi run marimo edit ir_widget_example.py
-
-# Launch Jupyter
-pixi run jupyter lab ir_widget_example.ipynb
-```
-
-### Code Examples
-```python
-# With sample data
-from ir_widget import IRWidget
-from sample_data import get_sample_data
-
-data = get_sample_data("ACETONE")
-widget = IRWidget()
-widget.load_data(data['frequencies'], data['intensities'], data['formula'])
-widget
-
-# From calculation file
-widget = IRWidget(file_path="molecule.log")
-widget
-
-# Customize display
-widget.broadening = "gaussian"
-widget.fwhm = 25.0
-widget.x_min = 500
-widget.x_max = 3500
-```
-
-## Testing Results
-
-All comprehensive tests passing:
-- ✅ Widget creation and initialization
-- ✅ Data loading (direct and from arrays)
-- ✅ Molecular formula generation
-- ✅ Property updates and validation
-- ✅ Sample data integration
-- ✅ Multiple molecule support
-- ✅ Spectrum calculation with broadening
-- ✅ Error handling
-
-## Future Enhancements (Optional)
-
-These are potential improvements for future versions:
-- [ ] Peak annotation and labeling
+- [ ] Automated test coverage for `mol_visualizer.py` (currently zero —
+      `tests/test_widget.py` is a manual smoke-test script, not pytest, and
+      only exercises `IRWidget`)
 - [ ] Export spectrum as PNG/SVG
-- [ ] Export data as CSV
-- [ ] Multiple spectrum overlay
-- [ ] Vibrational mode animation
-- [ ] 3D molecular viewer integration
+- [ ] Export frequency/intensity data as CSV
+- [ ] Multiple spectrum overlay (compare molecules/conformers)
 - [ ] Experimental spectrum overlay
-- [ ] Automatic peak assignment
-- [ ] Zoom/pan controls
+- [ ] Automatic peak assignment / peak picking & annotation
+- [ ] Zoom/pan controls on the Canvas spectrum plot
 - [ ] Raman spectroscopy support
+- [ ] Isotope effects visualization
+- [ ] README.md / package version bump to reflect Phase 2 scope (still
+      describes only the Phase 1 IR-table-and-spectrum widget)
 
 ## Technical Notes
 
 ### Spectrum Broadening Formulas
-- **Lorentzian**: I(ν) = I₀ · γ² / ((ν - ν₀)² + γ²)
-- **Gaussian**: I(ν) = I₀ · exp(-((ν - ν₀)/σ)²)
+- **Lorentzian**: I(ν) = I₀ · γ² / ((ν − ν₀)² + γ²)
+- **Gaussian**: I(ν) = I₀ · exp(−((ν − ν₀)/σ)²)
 
-Where γ is FWHM/2 for Lorentzian, σ = FWHM/(2√(2ln2)) for Gaussian
+Where γ is FWHM/2 for Lorentzian, σ = FWHM/(2√(2ln2)) for Gaussian.
 
-### Supported File Formats (via cclib)
-Gaussian, ORCA, Psi4, NWChem, GAMESS, Q-Chem, Molpro, MOPAC, and more
+### Supported input paths
+1. cclib file parsing — Gaussian, ORCA, Psi4, NWChem, GAMESS, Q-Chem, Molpro,
+   MOPAC, and more (`IRWidget.load_file` / `file_path=`)
+2. Direct array input (`IRWidget.load_data`)
+3. Live Psi4 wavefunction (`IRWidget.load_from_psi4_wfn`) or an in-widget
+   Psi4 run (`IRWidget.run_psi4_frequency`) — the only paths that populate
+   `atoms`/`displacements` for 3-D visualization
 
-### Widget Properties
-- `file_path` (str) - Path to calculation output file
-- `data` (dict) - Vibrational data (frequencies, intensities, formula)
-- `broadening` (str) - "none", "lorentzian", or "gaussian"
-- `fwhm` (float) - Full-width at half-maximum in cm⁻¹ (default: 15.0)
-- `x_min`, `x_max` (float) - Wavenumber range (default: 400-4000 cm⁻¹)
-- `show_table`, `show_plot` (bool) - Toggle visibility
-- `error_message` (str) - Error reporting
+### Widget/class inventory
+- `IRWidget` — table + spectrum (`ir_widget.py`/`.js`/`.css`)
+- `MolVisualizerWidget` — plain Python factory, not itself an anywidget
+- `LinkedViewWidget`, `ModeViewWidget`, `OrbitalViewWidget` — anywidget
+  subclasses returned by `MolVisualizerWidget`'s `view_linked()` /
+  `view_mode_selector()` / `view_orbital_selector()`
 
 ## Project Status
 
-**Version:** 1.0.0  
-**Completion Date:** February 12, 2026  
-**Status:** ✅ Production-ready and fully functional  
-**Test Coverage:** 100% of core features  
-
-The widget successfully replicates the IR functionality of openchemistrypy
-while being more lightweight, portable, and user-friendly.
-
-**Ready for immediate use!** 🎉
+**Phase 1 completed:** 2026-02-12
+**Phase 2 completed:** 2026-04-14 (last commit: `a73353a`, "Ignore calculated
+cube files")
+**Phase 3:** not started — see backlog above.

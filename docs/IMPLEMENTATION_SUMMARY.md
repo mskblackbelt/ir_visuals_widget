@@ -1,5 +1,10 @@
 # IR Vibrational Widget - Implementation Summary
 
+> This document describes the original v1.0.0 release (IR table + spectrum
+> only). It is kept as a historical snapshot. For the current state of the
+> project — including Psi4 integration and the 3-D `MolVisualizerWidget`
+> viewers added since — see `.copilot/plan.md` and `CHANGELOG.md`.
+
 ## Overview
 Successfully created a complete anywidget for displaying IR vibrational spectroscopy data from quantum chemistry calculations. The widget works in both Jupyter and Marimo notebooks.
 
@@ -41,7 +46,8 @@ Successfully created a complete anywidget for displaying IR vibrational spectros
    - Step-by-step demonstrations
    - Documentation of all features
 
-7. **`quick_test.py`** (Executable)
+7. **`quick_test.py`** (Executable) — *since removed; superseded by the
+   `pytest` suite under `tests/` (run with `pixi run pytest`)*
    - Quick validation script
    - Tests widget functionality
    - Displays available sample data

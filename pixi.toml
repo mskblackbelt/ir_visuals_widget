@@ -19,6 +19,7 @@ psi4 = ">=1.10,<2"
 nglview = ">=4.0.1,<5"
 py3dmol = ">=2.5.4,<3"
 jupyter-marimo-proxy = ">=0.0.4,<0.0.5"
+pytest = ">=9.1.1,<10"
 
 [pypi-dependencies]
 anywidget = { version = ">=0.9.21, <0.10", extras = ["dev"] }

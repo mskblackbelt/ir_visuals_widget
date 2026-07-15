@@ -1,21 +1,21 @@
 # Getting Started with IR Vibrational Widget
 
-## 1. Quick Test (30 seconds)
+## 1. Quick Test (a few seconds)
 
-Run the quick test to verify everything works:
+Run the automated test suite to verify everything works:
 
 ```bash
-pixi run python quick_test.py
+pixi run pytest
 ```
 
-You should see a list of available sample molecules and a successful test result.
+You should see all tests pass (including a real Psi4 frequency calculation).
 
 ## 2. Try in Marimo (Interactive Notebook)
 
 Launch the Marimo example notebook:
 
 ```bash
-pixi run marimo edit ir_widget_example.py
+pixi run marimo edit examples/ir_widget_example.py
 ```
 
 This will open an interactive notebook in your browser where you can:
@@ -29,7 +29,7 @@ This will open an interactive notebook in your browser where you can:
 Launch the Jupyter notebook:
 
 ```bash
-pixi run jupyter lab ir_widget_example.ipynb
+pixi run jupyter lab examples/ir_widget_example.ipynb
 ```
 
 This notebook includes step-by-step examples and explanations.
@@ -37,6 +37,9 @@ This notebook includes step-by-step examples and explanations.
 ## 4. Use in Your Own Code
 
 ### Simple Example
+
+`sample_data.py` lives in `examples/`, so run this from that directory (or
+add it to your `sys.path` first).
 
 ```python
 from ir_widget import IRWidget
@@ -184,6 +187,13 @@ Check that:
 2. The file contains vibrational frequency data
 3. The file format is supported by cclib
 
+### Loading from Psi4 instead
+For Psi4 1.10+, `IRWidget.load_from_psi4_wfn(wfn)` and
+`IRWidget.run_psi4_frequency(...)` are the recommended path — they also
+populate atom geometry and normal-mode displacements needed for the 3-D
+`MolVisualizerWidget` viewers, which cclib-parsed files do not. See the main
+[README.md](../README.md) for examples.
+
 ### Spectrum looks wrong
 Try adjusting:
 - `broadening` type (try "lorentzian" instead of "none")
@@ -192,16 +202,17 @@ Try adjusting:
 
 ## Next Steps
 
-- Read the full [README.md](README.md) for detailed documentation
+- Read the full [README.md](../README.md) for detailed documentation,
+  including the Psi4 data path and the 3-D `MolVisualizerWidget` viewers
 - Check [IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md) for technical details
-- Explore the example notebooks for more ideas
+- Explore the example notebooks in `examples/` for more ideas
 - Try loading your own quantum chemistry calculation files!
 
 ## Getting Help
 
 If you encounter issues:
 1. Check that all dependencies are installed: `pixi install`
-2. Run the quick test: `pixi run python quick_test.py`
+2. Run the automated test suite: `pixi run pytest`
 3. Try the example notebooks to see if they work
 4. Check the cclib documentation for supported file formats
 
