@@ -140,39 +140,32 @@ def test_read_cube_from_raw_string_when_not_a_path():
 
 
 # ── MolVisualizerWidget ───────────────────────────────────────────────────────
+# `water_data` lives in conftest.py so it's shared with test_widget.py and
+# stays in sync with examples/sample_data.py.
 
 @pytest.fixture
-def water_data():
+def geometry_only_data(water_data):
+    """Atoms present, but the one mode has no per-mode displacement vector."""
+    mode = water_data["modes"][0]
     return {
-        "formula": "H2O",
-        "n_modes": 3,
-        "atoms": [
-            {"symbol": "O", "x": 0.0, "y": 0.0, "z": 0.0},
-            {"symbol": "H", "x": 0.96, "y": 0.0, "z": 0.0},
-            {"symbol": "H", "x": -0.24, "y": 0.93, "z": 0.0},
-        ],
+        "formula": water_data["formula"],
+        "n_modes": 1,
+        "atoms": water_data["atoms"],
         "modes": [
-            {"mode": 1, "frequency": 1595.0, "intensity": 75.0,
-             "displacements": [[0.0, 0.0, 0.1], [0.1, 0.0, 0.0], [-0.1, 0.1, 0.0]]},
-            {"mode": 2, "frequency": 3657.0, "intensity": 20.0,
-             "displacements": [[0.0, 0.05, 0.0], [0.05, 0.0, 0.0], [0.0, 0.0, 0.05]]},
-            {"mode": 3, "frequency": 3756.0, "intensity": 45.0,
-             "displacements": [[0.0, 0.0, 0.05], [0.0, 0.05, 0.0], [0.05, 0.0, 0.0]]},
+            {"mode": mode["mode"], "frequency": mode["frequency"], "intensity": mode["intensity"]},
         ],
     }
 
 
 @pytest.fixture
-def geometry_only_data(water_data):
-    """Atoms present, but no per-mode displacement vectors."""
-    data = {**water_data, "modes": [dict(water_data["modes"][0])]}
-    del data["modes"][0]["displacements"]
-    return data
-
-
-@pytest.fixture
 def no_geometry_data(water_data):
-    return {"formula": water_data["formula"], "n_modes": 1, "modes": [water_data["modes"][0]]}
+    """No atom coordinates — just formula + a single mode, no displacements."""
+    mode = water_data["modes"][0]
+    return {
+        "formula": water_data["formula"],
+        "n_modes": 1,
+        "modes": [dict(mode)],
+    }
 
 
 def test_require_geometry_raises_without_atoms(no_geometry_data):
@@ -185,6 +178,12 @@ def test_view_structure_returns_py3dmol_view(water_data):
     vis = MolVisualizerWidget(water_data)
     view = vis.view_structure(width=300, height=200)
 
+    # NOTE: py3Dmol exposes no structured introspection API (no "what models
+    # are loaded" / "is this animating" query) — its _make_html() private
+    # method returns the raw accumulated JS string. Asserting on substrings
+    # of that string is a real, accepted coupling to py3Dmol's internals;
+    # a future py3Dmol release could reformat this HTML and break these
+    # assertions with no actual regression in MolVisualizerWidget itself.
     html = view._make_html()
     assert "addModel" in html
     assert "300px" in html and "200px" in html
@@ -215,13 +214,14 @@ def test_view_mode_without_displacements_raises(geometry_only_data):
         vis.view_mode(0)
 
 
-def test_view_orbital_builds_dual_isosurfaces(water_data, tmp_path):
+def test_view_orbital_builds_dual_isosurfaces(water_data):
     vis = MolVisualizerWidget(water_data)
-    cube_file = tmp_path / "orbital.cube"
-    cube_file.write_text("FAKE CUBE DATA\n")
 
+    # _read_cube() accepts raw cube-file content directly (see
+    # test_read_cube_from_raw_string_when_not_a_path above), so there's no
+    # need to round-trip trivial fake content through a real temp file.
     view = vis.view_orbital(
-        cube_file, isovalue=0.05, pos_color="green", neg_color="orange",
+        "FAKE CUBE DATA\n", isovalue=0.05, pos_color="green", neg_color="orange",
     )
 
     html = view._make_html()
@@ -260,13 +260,11 @@ def test_view_mode_selector_widget(water_data):
     assert widget._mode_labels[0].startswith("Mode 1")
 
 
-def test_view_orbital_selector_default_index_and_labels_from_homo(water_data, tmp_path):
+def test_view_orbital_selector_default_index_and_labels_from_homo(water_data):
     vis = MolVisualizerWidget(water_data)
-    cube_files = []
-    for i in range(5):
-        cube_file = tmp_path / f"orb_{i}.cube"
-        cube_file.write_text(f"CUBE {i}\n")
-        cube_files.append(cube_file)
+    # Raw strings behave identically to files here (see _read_cube), so no
+    # temp files are needed for these trivial fake cube contents.
+    cube_files = [f"CUBE {i}\n" for i in range(5)]
 
     widget = vis.view_orbital_selector(cube_files, homo_index=2)
 
@@ -278,13 +276,9 @@ def test_view_orbital_selector_default_index_and_labels_from_homo(water_data, tm
     assert widget._cube_string == "CUBE 2\n"
 
 
-def test_view_orbital_selector_without_homo_index_uses_generic_labels(water_data, tmp_path):
+def test_view_orbital_selector_without_homo_index_uses_generic_labels(water_data):
     vis = MolVisualizerWidget(water_data)
-    cube_files = []
-    for i in range(3):
-        cube_file = tmp_path / f"orb_{i}.cube"
-        cube_file.write_text(f"CUBE {i}\n")
-        cube_files.append(cube_file)
+    cube_files = [f"CUBE {i}\n" for i in range(3)]
 
     widget = vis.view_orbital_selector(cube_files)
 

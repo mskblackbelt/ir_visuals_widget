@@ -10,17 +10,17 @@ from ir_widget import IRWidget
 
 # ── load_data() / _prepare_data() ────────────────────────────────────────────
 
-def test_load_data_basic():
+def test_load_data_basic(h2o_sample):
+    freqs, intensities = h2o_sample["frequencies"], h2o_sample["intensities"]
     widget = IRWidget()
-    widget.load_data([1595.0, 3657.0, 3756.0], [75.0, 20.0, 45.0], formula="H2O")
+    widget.load_data(freqs.tolist(), intensities.tolist(), formula=h2o_sample["formula"])
 
     assert widget.error_message == ""
     assert widget.data["formula"] == "H2O"
     assert widget.data["n_modes"] == 3
     assert widget.data["modes"] == [
-        {"mode": 1, "frequency": 1595.0, "intensity": 75.0},
-        {"mode": 2, "frequency": 3657.0, "intensity": 20.0},
-        {"mode": 3, "frequency": 3756.0, "intensity": 45.0},
+        {"mode": i + 1, "frequency": float(f), "intensity": float(inten)}
+        for i, (f, inten) in enumerate(zip(freqs, intensities))
     ]
 
 
@@ -101,10 +101,10 @@ class _FakeParser:
             self.atomnos = atomnos
 
 
-def test_load_file_parses_frequencies_intensities_and_formula(monkeypatch):
+def test_load_file_parses_frequencies_intensities_and_formula(monkeypatch, h2o_sample):
     fake = _FakeParser(
-        vibfreqs=np.array([1595.0, 3657.0, 3756.0]),
-        vibirs=np.array([75.0, 20.0, 45.0]),
+        vibfreqs=h2o_sample["frequencies"],
+        vibirs=h2o_sample["intensities"],
         atomnos=np.array([8, 1, 1]),
     )
     monkeypatch.setattr("cclib.io.ccread", lambda path: fake)
