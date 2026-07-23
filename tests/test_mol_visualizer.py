@@ -160,11 +160,12 @@ def geometry_only_data(water_data):
 @pytest.fixture
 def no_geometry_data(water_data):
     """No atom coordinates — just formula + a single mode, no displacements."""
-    mode = water_data["modes"][0]
+    mode = dict(water_data["modes"][0])
+    mode.pop("displacements", None)
     return {
         "formula": water_data["formula"],
         "n_modes": 1,
-        "modes": [dict(mode)],
+        "modes": [mode],
     }
 
 

@@ -19,8 +19,9 @@ def test_load_data_basic(h2o_sample):
     assert widget.data["formula"] == "H2O"
     assert widget.data["n_modes"] == 3
     assert widget.data["modes"] == [
-        {"mode": i + 1, "frequency": float(f), "intensity": float(inten)}
-        for i, (f, inten) in enumerate(zip(freqs, intensities))
+        {"mode": 1, "frequency": 1595.0, "intensity": 75.0},
+        {"mode": 2, "frequency": 3657.0, "intensity": 20.0},
+        {"mode": 3, "frequency": 3756.0, "intensity": 45.0},
     ]
 
 
