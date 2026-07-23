@@ -113,7 +113,10 @@ def get_sample_data(molecule_key):
         available = ", ".join(SAMPLE_MOLECULES.keys())
         raise ValueError(f"Unknown molecule: {molecule_key}. Available: {available}")
     
-    return SAMPLE_MOLECULES[molecule_key].copy()
+    data = SAMPLE_MOLECULES[molecule_key].copy()
+    data["frequencies"] = data["frequencies"].copy()
+    data["intensities"] = data["intensities"].copy()
+    return data
 
 
 def list_available_molecules():

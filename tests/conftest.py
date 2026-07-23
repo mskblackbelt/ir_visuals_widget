@@ -6,16 +6,9 @@ sync with ``examples/sample_data.py`` — the same module the docs point users
 to — and means the numbers only need to be updated in one place.
 """
 
-import sys
-from pathlib import Path
-
 import pytest
 
-_EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples"
-if str(_EXAMPLES_DIR) not in sys.path:
-    sys.path.insert(0, str(_EXAMPLES_DIR))
-
-from sample_data import get_sample_data  # noqa: E402  (path must be set first)
+from sample_data import get_sample_data
 
 
 @pytest.fixture
@@ -39,23 +32,28 @@ def water_data(h2o_sample):
         [[0.0, 0.05, 0.0], [0.05, 0.0, 0.0], [0.0, 0.0, 0.05]],
         [[0.0, 0.0, 0.05], [0.0, 0.05, 0.0], [0.05, 0.0, 0.0]],
     ]
+    # Fail loudly rather than let zip() silently truncate `modes` if
+    # examples/sample_data.py's H2O entry ever changes length.
+    assert len(freqs) == len(intensities) == len(displacements)
+
+    modes = [
+        {
+            "mode": i + 1,
+            "frequency": float(freq),
+            "intensity": float(intensity),
+            "displacements": disp,
+        }
+        for i, (freq, intensity, disp) in enumerate(
+            zip(freqs, intensities, displacements)
+        )
+    ]
     return {
         "formula": h2o_sample["formula"],
-        "n_modes": len(freqs),
+        "n_modes": len(modes),
         "atoms": [
             {"symbol": "O", "x": 0.0, "y": 0.0, "z": 0.0},
             {"symbol": "H", "x": 0.96, "y": 0.0, "z": 0.0},
             {"symbol": "H", "x": -0.24, "y": 0.93, "z": 0.0},
         ],
-        "modes": [
-            {
-                "mode": i + 1,
-                "frequency": float(freq),
-                "intensity": float(intensity),
-                "displacements": disp,
-            }
-            for i, (freq, intensity, disp) in enumerate(
-                zip(freqs, intensities, displacements)
-            )
-        ],
+        "modes": modes,
     }

@@ -23,6 +23,7 @@ ir_widget = ["*.js", "*.css"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["examples"]
 markers = [
     "slow: exercises a real external dependency (e.g. a Psi4 calculation) rather than a mock",
 ]

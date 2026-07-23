@@ -140,8 +140,8 @@ def test_read_cube_from_raw_string_when_not_a_path():
 
 
 # ── MolVisualizerWidget ───────────────────────────────────────────────────────
-# `water_data` lives in conftest.py so it's shared with test_widget.py and
-# stays in sync with examples/sample_data.py.
+# `water_data` lives in conftest.py (built from the shared `h2o_sample`
+# fixture) so it stays in sync with examples/sample_data.py.
 
 @pytest.fixture
 def geometry_only_data(water_data):
@@ -150,7 +150,7 @@ def geometry_only_data(water_data):
     return {
         "formula": water_data["formula"],
         "n_modes": 1,
-        "atoms": water_data["atoms"],
+        "atoms": [dict(a) for a in water_data["atoms"]],
         "modes": [
             {"mode": mode["mode"], "frequency": mode["frequency"], "intensity": mode["intensity"]},
         ],
@@ -224,6 +224,19 @@ def test_view_orbital_builds_dual_isosurfaces(water_data):
     view = vis.view_orbital(
         "FAKE CUBE DATA\n", isovalue=0.05, pos_color="green", neg_color="orange",
     )
+
+    html = view._make_html()
+    assert html.count("addVolumetricData") == 2
+    assert "0.05" in html
+    assert "green" in html and "orange" in html
+
+
+def test_view_orbital_accepts_real_cube_file_path(water_data, tmp_path):
+    cube_file = tmp_path / "orbital.cube"
+    cube_file.write_text("FAKE CUBE DATA\n")
+
+    vis = MolVisualizerWidget(water_data)
+    view = vis.view_orbital(cube_file, isovalue=0.05, pos_color="green", neg_color="orange")
 
     html = view._make_html()
     assert html.count("addVolumetricData") == 2
